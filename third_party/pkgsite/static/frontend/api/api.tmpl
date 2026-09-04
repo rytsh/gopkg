@@ -1,0 +1,298 @@
+<!--
+  Copyright 2026 The Go Authors. All rights reserved.
+  Use of this source code is governed by a BSD-style
+  license that can be found in the LICENSE file.
+-->
+
+{{define "main"}}
+  <style>
+    .go-Content {
+      max-width: 95rem;
+      ul, dl dt, dd { all: revert }
+    }
+    .Api-list {
+      list-style: none;
+      padding: 0;
+    }
+    .Api-item {
+      border-bottom: var(--border);
+      margin-bottom: 3rem;
+      padding-bottom: 2rem;
+    }
+    .Api-item:last-child {
+      border-bottom: none;
+    }
+    .Api-itemRow {
+      display: grid;
+      gap: 2rem;
+      grid-template-columns: 1fr 1fr;
+    }
+    @media (max-width: 1000px) {
+      .Api-itemRow {
+        grid-template-columns: 1fr;
+      }
+    }
+    .Api-itemLeft {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      min-width: 0;
+    }
+    .Api-itemRight {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+    .Api-route {
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+    .Api-details {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+    .Api-label {
+      font-weight: 600;
+      color: var(--color-text);
+    }
+    .Api-paramsSection {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .Api-responseRow {
+      display: flex;
+      gap: 0.5rem;
+      align-items: baseline;
+      flex-wrap: wrap;
+    }
+    .Api-paramsTable {
+      border-collapse: collapse;
+      width: 100%;
+    }
+    .Api-paramsTable th {
+      text-align: left;
+      padding: 0.5rem 1.25rem;
+      font-weight: 600;
+    }
+    .Api-paramsTable th:first-child {
+      padding-left: 0;
+    }
+    .Api-paramsTable td {
+      border-top: var(--border);
+      vertical-align: top;
+      padding: 0.5rem 1.25rem;
+    }
+    .Api-paramsTable td:first-child {
+      padding-left: 0;
+    }
+
+    .Api-exampleContainer {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      overflow-x: auto;
+    }
+    .Api-exampleHeading {
+      font-weight: 600;
+      color: var(--color-text);
+      margin-bottom: 0.5rem;
+    }
+    .Api-codeBlock {
+      margin: 0;
+      font-family: var(--font-family-mono, monospace);
+      font-size: 0.875rem;
+      line-height: 1.4;
+      white-space: pre;
+    }
+  </style>
+  <main class="go-Container" id="main-content">
+    <div class="go-Content">
+      <h1 data-test-id="api-heading">API Documentation</h1>
+      <p>
+        Pkgsite provides a JSON API for accessing information about
+        Go packages and modules.
+      </p>
+
+      <h2>Requests</h2>
+      <p>
+      All requests are GET requests whose first URL segment selects the request
+      type.
+      Except for <code>search</code>, the remaining segments
+      specify a module or package path. Additional arguments
+      are specified as query parameters.
+      </p>
+      <p>
+      Package paths are ambiguous: the same path <code>a/b/c</code> could be package
+      <code>c</code> in module <code>a/b</code>
+      or package <code>b/c</code> in module <code>a</code>.
+      If both exist, the API returns an error with a list of possible modules in its
+      <code>candidates</code> field.
+      Make a follow-up request with the <code>module</code> query parameter to
+      disambiguate. (Note: this behavior differs from the pkgsite UI, which selects
+      the longest matching module path.)
+      </p>
+      <p>Some routes accept an optional <code>version</code> query parameter.
+      If missing, the latest version is chosen.</p>
+
+      <p>Some routes accept optional <code>GOOS</code> and <code>GOARCH</code>
+      query parameters to select the desired build context of the documentation.
+      If omitted, the default documentation build context is selected,
+      typically <code>linux/amd64</code>.
+      </p>
+
+      <h3>Filters</h3>
+      <p>Some routes accept a <code>filter</code> query parameter.
+      Only items that match the filter are returned.
+      The filter must be a Go expression that returns a boolean value.
+      Filters support the following subset of Go:
+      </p>
+      <ul>
+        <li> The values <code>true</code>, <code>false</code> and <code>nil</code>.
+        <li> <code>==</code> and <code>!=</code> on any value.
+        <li> <code>+</code>, <code>-</code>,<code>*</code>,
+             <code>/</code> and <code>%</code> on integers.
+        <li><code>+</code> on strings.
+        <li><code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code> and <code>&gt;=</code>
+             on strings and integers.
+        <li> Parenthesized expressions.
+      </ul>
+      <p>The following functions are also defined:</p>
+      <dl>
+        <dt><code>contains(s, sub)</code></dt>
+        <dd>String <code>s</code> contains substring <code>sub</code>.</dd>
+        <dt><code>hasPrefix(s, pre)</code></dt>
+        <dd>String <code>s</code> has the prefix <code>pre</code>.</dd>
+        <dt><code>hasSuffix(s, suf)</code></dt>
+        <dd>String <code>s</code> has the suffix <code>suf</code>.</dd>
+        <dt><code>matches(s, re)</code></dt>
+        <dd>String <code>s</code> matches the regular expression <code>re</code>.</dd>
+      </dl>
+      <p>
+      In addition, each route adds its own variables for the list items being filtered.
+      In general, each JSON field is a variable.
+      </p>
+      <p>
+      Some examples of filters:
+      <ul>
+      <li>To list only the main packages in a module, use the <code>packages</code> route with the filter
+      <code>name == "main"</code>.
+      <li>To list only symbols that are types, use the <code>symbols</code> route with the filter
+      <code>kind == "Type"</code>.
+      <li>To list only module versions for major version v2, use the <code>versions</code> route with the filter
+      <code>hasPrefix(version, "v2.")</code>.
+      </ul>
+      </p>
+      <p>
+      Most filters will need to be
+      percent-encoded. Go programs should call
+      <code>url.QueryEscape</code> to encode filters and all
+      other query parameter values. Or better, put all values into a <code>url.Values</code>
+      and then call <code>Encode</code> on that.
+      </p>
+
+      <h2>Responses</h2>
+      <p>
+        All routes return a JSON response.
+        You can find a link to the corresponding Go type for a route in the documentation below.
+        Errors are also returned as a JSON object, whose <code>message</code> field
+        contains the error message.
+      </p>
+      <p>
+        You can access the machine-readable <a href="/v1beta/openapi.yaml">OpenAPI Specification</a>.
+      </p>
+
+      <h2>Rate Limiting</h2>
+      <p>
+        Requests to the API are rate-limited to 45 queries per second (QPS) per IP block.
+        Exceeding the rate limit returns an HTTP status code <code>429 Too Many Requests</code>.
+      </p>
+
+      <h2>Pagination</h2>
+      <p>
+      Some responses are paginated. Each response page has a
+      <code>nextPageToken</code>, which is non-empty if there is
+      another page of items. To retrieve the next page, repeat
+      the original request verbatim, adding a <code>token</code>
+      query parameter whose value is the next-page token from the
+      response. Changing the request in any way other than providing
+      a token may result in an error.
+      </p>
+      <p>
+      As long as <code>nextPageToken</code> is non-empty,
+      there is another page, even if the current page has no items.
+      </p>
+      <p>
+
+      <h2>Routes</h2>
+      <ul class="Api-list">
+        {{range .Routes}}
+          <li class="Api-item">
+            <div class="Api-itemRow">
+              <div class="Api-itemLeft">
+                <div class="Api-route"><code>{{.Route}}</code></div>
+                <p>{{.Desc}}</p>
+                <div class="Api-details">
+                  {{if .QueryParams}}
+                    <div class="Api-paramsSection">
+                      <span class="Api-label">Parameters:</span>
+                      <table class="Api-paramsTable">
+                        <thead>
+                          <tr>
+                            <th>Name</th>
+                            <th>Type</th>
+                            <th>Description</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                            {{range .QueryParams}}
+                              <tr>
+                                <td><code>{{.Name}}</code></td>
+                                <td><code>{{.Type}}</code></td>
+                                <td>{{.Doc}}</td>
+                              </tr>
+                            {{end}}
+                        </tbody>
+                      </table>
+                    </div>
+                  {{end}} {{/* if .QueryParams */}}
+                  <div class="Api-responseRow">
+                    <span class="Api-label">Response:</span>
+                    <code>
+                      {{if .ResponsePaginatedType}}
+                        <a href="https://pkg.go.dev/golang.org/x/pkgsite/internal/api#PaginatedResponse">PaginatedResponse</a>[{{if .LinkPaginatedType}}<a href="https://pkg.go.dev/golang.org/x/pkgsite/internal/api#{{.ResponsePaginatedType}}">{{.ResponsePaginatedType}}</a>{{else}}{{.ResponsePaginatedType}}{{end}}]
+                      {{else}}
+                        <a href="https://pkg.go.dev/golang.org/x/pkgsite/internal/api#{{.Response}}">{{.Response}}</a>
+                      {{end}}
+                    </code>
+                  </div>
+                </div>
+              </div>
+              <div class="Api-itemRight">
+                <div class="Api-exampleContainer">
+                  {{range .Examples}}
+                    <div class="Api-exampleSection">
+                      <div class="Api-exampleHeading">Example Request</div>
+                      <pre class="Api-codeBlock"><code>curl -L https://pkg.go.dev{{.Request}}</code></pre>
+                    </div>
+                    <div class="Api-exampleSection">
+                      <div class="Api-exampleHeading">Example Response</div>
+                      <pre class="Api-codeBlock"><code>{{.Response}}</code></pre>
+                    </div>
+                  {{else}}
+                    <div class="Api-exampleSection">
+                      <div class="Api-exampleHeading">No Examples</div>
+                      <p>No examples available for this route.</p>
+                    </div>
+                  {{end}}
+                </div>
+              </div>
+            </div>
+          </li>
+        {{end}}
+      </ul>
+    </div>
+  </main>
+{{end}}
