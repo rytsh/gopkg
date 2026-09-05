@@ -14,6 +14,18 @@ func TestModuleVersionFromPath(t *testing.T) {
 		{path: "/example.com/mod@latest"},
 		{path: "/example.com/mod"},
 		{path: "/search?q=example.com/mod@v1.2.3"},
+		{path: "//example.com/mod@v1.2.3"},
+		{path: "https://example.com/mod@v1.2.3"},
+		{path: "/example.com/mod@v1.2.3/../other"},
+		{path: "/example.com/mod@v1.2.3//other"},
+		{path: "/example.com/mod@v1.2.3/"},
+		{path: "/example.com/mod@v1.2.3/sub@v1.0.0"},
+		{path: "/example.com/mod@v1.2.3?next=//evil.test"},
+		{path: "/example.com/mod@v1.2.3#fragment"},
+		{path: "/example.com/mod@v1.2"},
+		{path: "/example.com/mod@v1.2.3+metadata"},
+		{path: "/example.com/mod@v2.0.0"},
+		{path: "/example.com/mod/v2@v2.0.0", wantModule: "example.com/mod/v2", wantVersion: "v2.0.0", wantOK: true},
 	}
 	for _, test := range tests {
 		t.Run(test.path, func(t *testing.T) {

@@ -143,8 +143,8 @@ type offlineModuleGetter struct {
 	fetch.ModuleGetter
 }
 
-func (g *offlineModuleGetter) SourceInfo(context.Context, string, string) (*source.Info, error) {
-	return nil, nil
+func (g *offlineModuleGetter) SourceInfo(ctx context.Context, modulePath, version string) (*source.Info, error) {
+	return source.ModuleInfo(ctx, source.NewStaticClient(), modulePath, version)
 }
 
 type searchableProxyGetter struct {

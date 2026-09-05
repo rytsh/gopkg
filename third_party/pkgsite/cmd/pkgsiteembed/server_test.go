@@ -50,6 +50,48 @@ func TestSearchableProxyGetterSearch(t *testing.T) {
 	}
 }
 
+func TestOfflineModuleGetterSourceInfo(t *testing.T) {
+	tests := []struct {
+		name       string
+		modulePath string
+		wantRepo   string
+		wantInfo   bool
+	}{
+		{
+			name:       "generic VCS repository with module subpath",
+			modulePath: "git.example.com/group/test.git/subpath",
+			wantRepo:   "https://git.example.com/group/test",
+			wantInfo:   true,
+		},
+		{
+			name:       "custom GitLab repository with module subpath",
+			modulePath: "gitlab.example.com/group/test.git/subpath",
+			wantRepo:   "https://gitlab.example.com/group/test",
+			wantInfo:   true,
+		},
+		{
+			name:       "unrecognized vanity path",
+			modulePath: "code.example.com/group/test/subpath",
+		},
+	}
+
+	getter := &offlineModuleGetter{}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			info, err := getter.SourceInfo(context.Background(), test.modulePath, "v1.2.3")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (info != nil) != test.wantInfo {
+				t.Fatalf("SourceInfo() = %v, want info %t", info, test.wantInfo)
+			}
+			if info != nil && info.RepoURL() != test.wantRepo {
+				t.Fatalf("RepoURL() = %q, want %q", info.RepoURL(), test.wantRepo)
+			}
+		})
+	}
+}
+
 func resultPaths(results []*internal.SearchResult) []string {
 	paths := make([]string, len(results))
 	for i, result := range results {

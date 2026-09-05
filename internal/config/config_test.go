@@ -28,6 +28,7 @@ refresh: 1m
 	t.Setenv("GOPKG_HTTP", "127.0.0.1:9000")
 	t.Setenv("GOPKG_DIR", "/src/one,/src/two")
 	t.Setenv("GOPKG_ADMIN_TOKEN", "env-secret")
+	t.Setenv("GOPKG_UPSTREAM_PROXY", "https://user:proxy-secret@proxy.example.com")
 
 	cfg, err := Load(context.Background(), "test")
 	if err != nil {
@@ -59,5 +60,8 @@ refresh: 1m
 	}
 	if _, exists := logged["admin_token"]; exists {
 		t.Error("MarshalMap() exposed admin_token")
+	}
+	if _, exists := logged["upstream_proxy"]; exists {
+		t.Error("MarshalMap() exposed upstream_proxy credentials")
 	}
 }

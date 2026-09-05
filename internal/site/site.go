@@ -5,9 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html/template"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -84,30 +86,112 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "site is not ready", http.StatusServiceUnavailable)
 		return
 	}
-	if r.Method == http.MethodGet {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
 		modulePath, version, ok := moduleVersionFromPath(r.URL.Path)
 		if ok && (current.store == nil || !current.store.HasVersion(modulePath, version)) {
-			if m.upstream == nil {
-				http.NotFound(w, r)
-				return
-			}
-			if err := m.fetchMissing(r.Context(), modulePath, version); err != nil {
-				if errors.Is(err, modproxy.ErrUpstreamNotFound) {
-					http.NotFound(w, r)
-					return
-				}
-				slog.ErrorContext(r.Context(), "on-demand module fetch failed",
-					"module", modulePath,
-					"version", version,
-					"error", err,
-				)
-				http.Error(w, "unable to fetch requested module version", http.StatusBadGateway)
-				return
-			}
-			current = m.current.Load()
+			m.serveMissing(w, r, r.URL.Path, modulePath, version, "", http.StatusNotFound)
+			return
 		}
 	}
 	current.handler.ServeHTTP(w, r)
+}
+
+// Fetch serves the explicit mutation action; the server applies admin authentication
+// and cross-origin protection before calling it.
+func (m *Manager) Fetch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid fetch form", http.StatusBadRequest)
+		return
+	}
+	target := r.PostForm.Get("path")
+	modulePath, version, ok := moduleVersionFromPath(target)
+	if !ok {
+		http.Error(w, "a valid module path and explicit canonical version are required", http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	if m.upstream == nil {
+		m.serveMissing(w, r, target, modulePath, version, "Fetching is disabled on this server. Ask an administrator to upload this version or enable upstream fetching.", http.StatusServiceUnavailable)
+		return
+	}
+	if err := m.fetchMissing(r.Context(), modulePath, version); err != nil {
+		message := "Unable to fetch this module version. Wait at least 30 seconds before retrying, or contact an administrator."
+		status := http.StatusBadGateway
+		if errors.Is(err, modproxy.ErrUpstreamNotFound) {
+			message = "This version was not found in the configured upstream proxy. Check the module path and version before retrying."
+			status = http.StatusNotFound
+		}
+		// Upstream errors can contain credentials or query parameters from proxy URLs.
+		slog.WarnContext(r.Context(), "module fetch failed", "module", modulePath, "version", version, "status", status)
+		m.serveMissing(w, r, target, modulePath, version, message, status)
+		return
+	}
+	http.Redirect(w, r, (&url.URL{Path: target}).String(), http.StatusSeeOther)
+}
+
+var missingPage = template.Must(template.New("missing").Parse(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Module}}@{{.Version}} not available - gopkg</title>
+  <link rel="stylesheet" href="/static/shared/color/color.css">
+  <style>
+    body { margin: 0; font: 16px/1.5 system-ui, sans-serif; color: var(--color-text, #202224); background: var(--color-background, #fff); }
+    header { background: #007d9c; padding: 1rem; }
+    header a { color: #fff; font-weight: 600; }
+    main { max-width: 48rem; margin: 3rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.75rem; line-height: 1.25; }
+    code { overflow-wrap: anywhere; }
+    a { color: var(--color-text-link, #007d9c); text-underline-offset: .2em; }
+    button { min-height: 44px; padding: .6rem 1.5rem; border: 1px solid #007d9c; border-radius: .25rem; background: #007d9c; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+    button:hover { background: #00657e; }
+    :focus-visible { outline: 3px solid var(--color-text, #202224); outline-offset: 3px; }
+    header a:focus-visible { outline-color: #fff; }
+    .message { padding: 1rem; border: 1px solid var(--color-border, #c6c8ca); }
+  </style>
+</head>
+<body>
+  <header><nav aria-label="Main navigation"><a href="/">Go Packages</a></nav></header>
+  <main>
+    <h1>Module version not available</h1>
+    <p><code>{{.Module}}@{{.Version}}</code> is not available in this server's local proxy index.</p>
+    {{if .Message}}<p class="message" role="alert">{{.Message}}</p>{{end}}
+    {{if .CanFetch}}
+      <p>Fetch this version from the configured upstream proxy to make its documentation available locally. Nothing is downloaded until you select Fetch.</p>
+      <form method="post" action="/-/fetch">
+        <input type="hidden" name="path" value="{{.Path}}">
+        <button type="submit">Fetch</button>
+      </form>
+      <p>The request may take a few minutes. If prompted, use your administrator credentials.</p>
+    {{else}}
+      <p>Upstream fetching is disabled. An administrator can <a href="/-/admin">upload this module version</a> or enable upstream fetching.</p>
+    {{end}}
+    <p><a href="/">Browse available packages</a></p>
+  </main>
+</body>
+</html>`))
+
+func (m *Manager) serveMissing(w http.ResponseWriter, r *http.Request, target, modulePath, version, message string, status int) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self' 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+	w.WriteHeader(status)
+	if r.Method == http.MethodHead {
+		return
+	}
+	if err := missingPage.Execute(w, struct {
+		Path, Module, Version, Message string
+		CanFetch                       bool
+	}{target, modulePath, version, message, m.upstream != nil}); err != nil {
+		slog.ErrorContext(r.Context(), "render missing module page failed", "error", err)
+	}
 }
 
 func (m *Manager) Stats() Stats {
@@ -176,6 +260,9 @@ func (m *Manager) fetchMissing(ctx context.Context, modulePath, version string) 
 }
 
 func moduleVersionFromPath(requestPath string) (string, string, bool) {
+	if !strings.HasPrefix(requestPath, "/") || strings.ContainsAny(requestPath, "?#\\") {
+		return "", "", false
+	}
 	requestPath = strings.TrimPrefix(requestPath, "/")
 	at := strings.IndexByte(requestPath, '@')
 	if at <= 0 {
@@ -183,10 +270,13 @@ func moduleVersionFromPath(requestPath string) (string, string, bool) {
 	}
 	modulePath := requestPath[:at]
 	version := requestPath[at+1:]
+	suffix := ""
 	if slash := strings.IndexByte(version, '/'); slash >= 0 {
+		suffix = version[slash:]
 		version = version[:slash]
 	}
-	if module.Check(modulePath, version) != nil {
+	if module.Check(modulePath, version) != nil || module.CanonicalVersion(version) != version ||
+		module.CheckImportPath(modulePath+suffix) != nil {
 		return "", "", false
 	}
 	return modulePath, version, true

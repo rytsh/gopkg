@@ -19,7 +19,7 @@ type Config struct {
 	FetchMissing    bool          `cfg:"fetch_missing" default:"false"`
 	FetchTimeout    time.Duration `cfg:"fetch_timeout" default:"2m"`
 	RefreshInterval time.Duration `cfg:"refresh" default:"10m"`
-	UpstreamProxy   string        `cfg:"upstream_proxy"`
+	UpstreamProxy   string        `cfg:"upstream_proxy" log:"-"`
 }
 
 func Load(ctx context.Context, version string) (*Config, error) {

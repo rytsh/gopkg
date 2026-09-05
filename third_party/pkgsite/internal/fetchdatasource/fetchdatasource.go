@@ -217,10 +217,13 @@ func (ds *FetchDataSource) GetUnit(ctx context.Context, um *internal.UnitMeta, f
 	if u == nil {
 		return nil, fmt.Errorf("import path %s not found in module %s: %w", um.Path, um.ModulePath, derrors.NotFound)
 	}
-	// Return only the Documentation matching the given BuildContext, if any.
-	// Since we cache the module and its units, we have to copy this unit before we modify it.
-	// It can be a shallow copy, since we're only modifying the Unit.Documentation field.
+	// Since we cache the module and its units, copy this unit before adding
+	// request-specific fields.
 	u2 := *u
+	if fields&internal.WithMain != 0 {
+		u2.NumImportedBy = len(ds.importedBy(um.Path))
+	}
+	// Return only the Documentation matching the given BuildContext, if any.
 	if d := internal.DocumentationForBuildContext(u.Documentation, bc); d != nil {
 		u2.Documentation = []*internal.Documentation{d}
 	} else {

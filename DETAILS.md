@@ -157,16 +157,19 @@ GOPROXY=https://proxy.golang.org \
   gopkg -proxy-dir /srv/goproxy -fetch-missing
 ```
 
-An explicit version URL then fetches a missing module and serves the same
-request:
+An explicit version URL shows a missing-module page (HTTP 404) with a **Fetch**
+button when the version is not in the local proxy index:
 
 ```text
 http://localhost:8080/github.com/worldline-go/wkafka@v0.6.7
 ```
 
+Visiting the page with GET or HEAD never downloads a module. Selecting **Fetch**
+submits `POST /-/fetch` with a `path` form field containing the documentation path.
 `gopkg` requests the version's `.info`, `.mod`, and `.zip` artifacts from the
 configured GOPROXY, validates them, publishes them atomically into the first
-`-proxy-dir`, rebuilds the index, and renders the package page. Subsequent
+`-proxy-dir`, rebuilds the index, and redirects (HTTP 303) to the documentation
+path, preserving any subpackage suffix. Subsequent
 requests use the local files and do not contact the upstream proxy.
 
 Only syntactically valid, explicit module versions are fetched. `latest` and
@@ -174,10 +177,16 @@ direct VCS downloads are not supported. Comma and pipe fallback behavior
 follows the GOPROXY protocol. Fetches have a configurable timeout, a 500 MiB zip
 limit, and a 30-second negative-result cache.
 
-Enabling this option lets any HTTP client request valid module versions and
-therefore consume upstream bandwidth and local disk. Use it only on a trusted
-network or behind an authenticated reverse proxy. `-admin-token` protects the
-administration endpoints; it does not protect URL-triggered fetches.
+The fetch action uses the same `-admin-token` Basic or Bearer authentication as
+uploads and rejects cross-origin browser submissions. The missing-module page
+itself remains public. Without an admin token, clients can fetch valid module
+versions and consume upstream bandwidth and local disk; use a trusted network
+or configure authentication. Proxy addresses and credentials are not shown on
+the page. An upstream not-found result returns a helpful 404 page; other fetch
+failures return a retry page with HTTP 502. Without upstream fetching enabled,
+the missing page links to administration instead of showing a Fetch button,
+and POST returns HTTP 503. `upstream_proxy` alone does not enable fetching:
+`fetch_missing` must also be enabled, and a writable proxy directory is required.
 
 ### Offline runtime
 
@@ -204,7 +213,7 @@ Usage: gopkg [flags] [LOCAL_DIR ...]
   -dir value
         local directory containing one or more Go modules (repeatable)
   -fetch-missing
-        fetch explicit missing module versions from GOPROXY
+        allow explicit missing module versions to be fetched from GOPROXY using the Fetch button
   -fetch-timeout duration
         total timeout for an upstream module fetch (default 2m0s)
   -http string

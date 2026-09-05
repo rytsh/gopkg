@@ -210,11 +210,17 @@ func NewClient(httpClient *http.Client) *Client {
 	return &Client{httpClient: httpClient}
 }
 
+// NewStaticClient constructs a Client that only resolves statically
+// recognizable module paths and never makes HTTP requests.
+func NewStaticClient() *Client {
+	return &Client{}
+}
+
 // NewClientForTesting returns a Client suitable for testing. It returns the
 // same results as an ordinary client for statically recognizable paths, but
 // always returns a nil *Info for dynamic paths (those requiring HTTP requests).
 func NewClientForTesting() *Client {
-	return &Client{}
+	return NewStaticClient()
 }
 
 // doURL makes an HTTP request using the given url and method. It returns an

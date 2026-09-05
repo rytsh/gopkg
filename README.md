@@ -71,9 +71,9 @@ dir:
 # Athens storage or standard GOPROXY directories to serve.
 proxy_dir:
   - /var/lib/goproxy
-# Password for admin and upload endpoints; empty accepts requests without authentication.
+# Password for admin, upload, and fetch endpoints; empty accepts requests without authentication.
 admin_token: ""
-# Fetch explicitly requested missing versions from the upstream GOPROXY.
+# Enable the Fetch button for missing versions; visiting a page never downloads them.
 fetch_missing: false
 # Maximum duration allowed for one upstream module fetch.
 fetch_timeout: 2m

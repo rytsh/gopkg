@@ -106,7 +106,7 @@ func loadConfig(ctx context.Context, args []string) (*config.Config, bool, error
 	var proxyDirs stringList
 	addr := flags.String("http", cfg.HTTP, "HTTP listen address")
 	adminToken := flags.String("admin-token", "", "basic-auth password for proxy mutations (empty allows unauthenticated access)")
-	fetchMissing := flags.Bool("fetch-missing", cfg.FetchMissing, "fetch explicit missing module versions from GOPROXY")
+	fetchMissing := flags.Bool("fetch-missing", cfg.FetchMissing, "allow explicit missing module versions to be fetched from GOPROXY using the Fetch button")
 	fetchTimeout := flags.Duration("fetch-timeout", cfg.FetchTimeout, "total timeout for an upstream module fetch")
 	refreshInterval := flags.Duration("refresh", cfg.RefreshInterval, "proxy directory change check interval (0 disables)")
 	showVersion := flags.Bool("version", false, "print version information and exit")

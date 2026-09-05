@@ -49,6 +49,7 @@ func Start(ctx context.Context, cfg Config, siteManager *site.Manager) error {
 	server.GET("/-/status", statusHandler(siteManager))
 	server.POST("/-/reload", requireAdmin(cfg.AdminToken, reloadHandler(siteManager)))
 	server.POST("/-/modules", requireAdmin(cfg.AdminToken, addModuleHandler(siteManager)))
+	server.POST("/-/fetch", fetchHandler(siteManager, cfg.AdminToken))
 	server.Handle("/", siteManager)
 	server.HandleWildcard("/", siteManager)
 
@@ -78,6 +79,10 @@ func Start(ctx context.Context, cfg Config, siteManager *site.Manager) error {
 		return err
 	}
 	return nil
+}
+
+func fetchHandler(siteManager *site.Manager, token string) http.HandlerFunc {
+	return http.NewCrossOriginProtection().Handler(requireAdmin(token, http.HandlerFunc(siteManager.Fetch))).ServeHTTP
 }
 
 var adminPage = template.Must(template.New("admin").Parse(`<!doctype html>
