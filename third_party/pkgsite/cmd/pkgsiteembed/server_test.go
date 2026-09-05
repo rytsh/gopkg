@@ -50,6 +50,23 @@ func TestSearchableProxyGetterSearch(t *testing.T) {
 	}
 }
 
+func TestSearchExcludesInternalPackages(t *testing.T) {
+	getter := &searchableProxyGetter{packages: []SearchPackage{
+		{Name: "internal", Path: "internal"},
+		{Name: "hidden", Path: "internal/hidden"},
+		{Name: "internal", Path: "example.com/mod/internal"},
+		{Name: "hidden", Path: "example.com/mod/internal/hidden"},
+		{Name: "internaltools", Path: "example.com/mod/internaltools"},
+	}}
+	results, err := getter.Search(t.Context(), "internal", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := resultPaths(results), []string{"example.com/mod/internaltools"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("search paths = %v, want %v", got, want)
+	}
+}
+
 func TestOfflineModuleGetterSourceInfo(t *testing.T) {
 	tests := []struct {
 		name       string

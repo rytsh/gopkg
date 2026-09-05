@@ -17,6 +17,9 @@
           </div>
         <div class="go-Header-rightContent">
           {{template "symbol_search_bar" .}}
+          {{if .LocalMode}}
+            <a class="go-Header-stdlib" href="/std">Stdlib</a>
+          {{end}}
           <ul class="go-Header-menu">
             <li class="go-Header-menuItem">
               <a class="js-desktop-menu-hover" href="#" data-gtmc="nav link">

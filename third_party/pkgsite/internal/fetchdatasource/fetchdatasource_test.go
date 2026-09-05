@@ -13,7 +13,7 @@ import (
 	"golang.org/x/pkgsite/internal/source"
 )
 
-func TestGetUnitPopulatesImportedByCountForMain(t *testing.T) {
+func TestGetUnitPopulatesImportCountsForMain(t *testing.T) {
 	const (
 		modulePath = "example.com/mod"
 		version    = "v1.2.3"
@@ -21,7 +21,7 @@ func TestGetUnitPopulatesImportedByCountForMain(t *testing.T) {
 	getter := &importedByTestGetter{
 		content: fstest.MapFS{
 			"go.mod": &fstest.MapFile{Data: []byte("module " + modulePath + "\n\ngo 1.26\n")},
-			"mod.go": &fstest.MapFile{Data: []byte("package mod\n")},
+			"mod.go": &fstest.MapFile{Data: []byte("package mod\nimport (\n\"fmt\"\n\"strings\"\n)\nfunc Hello() string { return fmt.Sprint(strings.ToUpper(\"hello\")) }\n")},
 		},
 		importers: map[string][]string{
 			modulePath: {"example.com/first", "example.com/second"},
@@ -49,6 +49,9 @@ func TestGetUnitPopulatesImportedByCountForMain(t *testing.T) {
 	}
 	if withMain.NumImportedBy != 2 {
 		t.Fatalf("GetUnit() with WithMain NumImportedBy = %d, want 2", withMain.NumImportedBy)
+	}
+	if withMain.NumImports != 2 || withMain.NumImports != len(withMain.Imports) {
+		t.Fatalf("GetUnit() NumImports = %d, Imports = %v, want 2 imports", withMain.NumImports, withMain.Imports)
 	}
 }
 

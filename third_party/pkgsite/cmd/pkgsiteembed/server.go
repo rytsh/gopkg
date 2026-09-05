@@ -175,6 +175,9 @@ func (g *searchableProxyGetter) Search(ctx context.Context, query string, limit 
 				return nil, err
 			}
 		}
+		if strings.Contains("/"+pkg.Path+"/", "/internal/") {
+			continue
+		}
 		packagePath := strings.ToLower(pkg.Path)
 		name := strings.ToLower(pkg.Name)
 		synopsis := strings.ToLower(pkg.Synopsis)

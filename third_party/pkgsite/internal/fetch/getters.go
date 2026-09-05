@@ -508,6 +508,9 @@ func (g *goPackagesModuleGetter) Search(ctx context.Context, query string, limit
 
 	var pkgs []scoredPackage
 	for _, pkg := range g.packages {
+		if strings.Contains("/"+pkg.PkgPath+"/", "/internal/") {
+			continue
+		}
 		i, score := matcher.Match([]string{pkg.PkgPath})
 		if i < 0 {
 			continue

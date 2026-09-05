@@ -39,6 +39,7 @@ func moduleUnit(modulePath string, unitMeta *internal.UnitMeta,
 	if pkg != nil {
 		unit.Name = pkg.name
 		unit.Imports = pkg.imports
+		unit.NumImports = len(pkg.imports)
 		unit.Documentation = pkg.docs
 		var bcs []internal.BuildContext
 		for _, d := range unit.Documentation {

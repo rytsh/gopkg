@@ -125,6 +125,24 @@
   display: none;
 }
 
+.go-Header-stdlib:link,
+.go-Header-stdlib:visited {
+  align-items: center;
+  border-bottom: 0.1875rem solid transparent;
+  border-top: 0.1875rem solid transparent;
+  color: var(--white);
+  display: inline-flex;
+  flex: none;
+  height: 100%;
+  padding: 0 0.75rem;
+  text-decoration: none;
+}
+
+.go-Header-stdlib:hover,
+.go-Header-stdlib:focus {
+  border-bottom-color: var(--white);
+}
+
 .go-Header-submenu {
   background: transparent;
   background-color: var(--color-background);
