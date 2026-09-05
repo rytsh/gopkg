@@ -17,7 +17,7 @@ RUN set -eux; \
 
 FROM --platform=$BUILDPLATFORM alpine:latest AS filesystem
 RUN mkdir /proxy && \
-    touch /etc/gopkg.yaml && \
+    printf '{}\n' > /etc/gopkg.yaml && \
     chown 65532:65532 /proxy /etc/gopkg.yaml && \
     chmod 0600 /etc/gopkg.yaml
 
@@ -44,7 +44,7 @@ ENV PATH="/usr/local/go/bin:${PATH}" \
     GOPKG_PROXY_DIR="/proxy" \
     GOPKG_FETCH_MISSING="false" \
     GOPKG_FETCH_TIMEOUT="2m" \
-    GOPKG_REFRESH="30s"
+    GOPKG_REFRESH="10m"
 
 USER 65532:65532
 WORKDIR /proxy

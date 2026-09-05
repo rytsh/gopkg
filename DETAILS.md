@@ -212,7 +212,7 @@ Usage: gopkg [flags] [LOCAL_DIR ...]
   -proxy-dir value
         Athens disk storage or GOPROXY directory (repeatable)
   -refresh duration
-        proxy directory change check interval (0 disables) (default 30s)
+        proxy directory change check interval (0 disables) (default 10m)
   -upstream-proxy string
         upstream GOPROXY list (defaults to the GOPROXY environment variable)
   -version

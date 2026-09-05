@@ -12,6 +12,7 @@ import (
 	"hash/fnv"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"os"
 	"path"
@@ -74,6 +75,10 @@ func Open(roots []string) (*Store, error) {
 			return nil, err
 		}
 	}
+	started := time.Now()
+	totalModules := len(store.modules)
+	slog.Info("indexing proxy packages", "total_modules", totalModules)
+	indexedModules := 0
 	for _, mod := range store.modules {
 		for version := range mod.versions {
 			mod.ordered = append(mod.ordered, version)
@@ -88,11 +93,25 @@ func Open(roots []string) (*Store, error) {
 			return nil, err
 		}
 		store.packages = append(store.packages, packages...)
+		indexedModules++
+		if indexedModules%100 == 0 || indexedModules == totalModules {
+			slog.Info("proxy package index progress",
+				"indexed_modules", indexedModules,
+				"total_modules", totalModules,
+				"packages", len(store.packages),
+				"elapsed", time.Since(started).Round(time.Second),
+			)
+		}
 	}
 	populateImportedBy(store.packages)
 	sort.Slice(store.packages, func(i, j int) bool {
 		return store.packages[i].Path < store.packages[j].Path
 	})
+	slog.Info("proxy package index completed",
+		"modules", totalModules,
+		"packages", len(store.packages),
+		"elapsed", time.Since(started).Round(time.Second),
+	)
 	return store, nil
 }
 
@@ -481,10 +500,16 @@ func (s *Store) index(root string) error {
 			return nil
 		}
 		if entry.Name() == "source.zip" {
-			return s.indexAthens(absolute, current, entry)
+			if err := s.indexAthens(absolute, current, entry); err != nil {
+				slog.Warn("skipping invalid proxy artifact", "path", current, "error", err)
+			}
+			return nil
 		}
 		if strings.HasSuffix(entry.Name(), ".zip") {
-			return s.indexStandard(absolute, current, entry)
+			if err := s.indexStandard(absolute, current, entry); err != nil {
+				slog.Warn("skipping invalid proxy artifact", "path", current, "error", err)
+			}
+			return nil
 		}
 		return nil
 	})

@@ -78,7 +78,7 @@ fetch_missing: false
 # Maximum duration allowed for one upstream module fetch.
 fetch_timeout: 2m
 # Interval for detecting proxy directory changes; use 0 to disable polling.
-refresh: 30s
+refresh: 10m
 # Upstream GOPROXY URL or fallback list; empty uses the GOPROXY environment variable.
 upstream_proxy: ""
 ```

@@ -18,7 +18,7 @@ type Config struct {
 	AdminToken      string        `cfg:"admin_token" log:"-"`
 	FetchMissing    bool          `cfg:"fetch_missing" default:"false"`
 	FetchTimeout    time.Duration `cfg:"fetch_timeout" default:"2m"`
-	RefreshInterval time.Duration `cfg:"refresh" default:"30s"`
+	RefreshInterval time.Duration `cfg:"refresh" default:"10m"`
 	UpstreamProxy   string        `cfg:"upstream_proxy"`
 }
 

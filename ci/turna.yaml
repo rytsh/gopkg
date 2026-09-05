@@ -16,7 +16,7 @@ loads:
             admin_token: ""
             fetch_missing: false
             fetch_timeout: 2m
-            refresh: 30s
+            refresh: 10m
             upstream_proxy: ""
 
 services:

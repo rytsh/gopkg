@@ -2,7 +2,9 @@ package modproxy
 
 import (
 	"archive/zip"
+	"bytes"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -126,6 +128,33 @@ func TestStoreUsesProxyLatestSemanticsAndIndexesLatestPackages(t *testing.T) {
 	sort.Slice(want, func(i, j int) bool { return want[i].Path < want[j].Path })
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Packages() = %#v, want %#v", got, want)
+	}
+}
+
+func TestStoreSkipsInvalidProxyArtifacts(t *testing.T) {
+	root := t.TempDir()
+	writeAthensVersion(t, root, "example.com/valid", "v1.0.0", "2026-01-01T00:00:00Z", "valid")
+	invalidDir := filepath.Join(root, "invalid", "v1.0.0")
+	writeFile(t, filepath.Join(invalidDir, "go.mod"), "module invalid\n")
+	writeZip(t, filepath.Join(invalidDir, "source.zip"), map[string]string{
+		"invalid@v1.0.0/invalid.go": "package invalid\n",
+	})
+
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	store, err := Open([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := store.Modules(), []string{"example.com/valid"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Modules() = %v, want %v", got, want)
+	}
+	if !strings.Contains(logs.String(), "skipping invalid proxy artifact") ||
+		!strings.Contains(logs.String(), filepath.Join(invalidDir, "source.zip")) {
+		t.Fatalf("warning log = %q, want skipped artifact path", logs.String())
 	}
 }
 
