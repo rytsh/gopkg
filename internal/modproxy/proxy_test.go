@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"golang.org/x/mod/module"
+	modzip "golang.org/x/mod/zip"
 )
 
 func TestStoreServesAthensAndStandardProxy(t *testing.T) {
@@ -128,6 +129,73 @@ func TestStoreUsesProxyLatestSemanticsAndIndexesLatestPackages(t *testing.T) {
 	sort.Slice(want, func(i, j int) bool { return want[i].Path < want[j].Path })
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Packages() = %#v, want %#v", got, want)
+	}
+}
+
+func TestAthensModuleIdentity(t *testing.T) {
+	for _, modulePath := range []string{"example.com/tool.git", "example.com/Acme/tool.git", "example.com/tool.git/v2"} {
+		t.Run(modulePath, func(t *testing.T) {
+			root := t.TempDir()
+			version := "v1.0.0"
+			if strings.HasSuffix(modulePath, "/v2") {
+				version = "v2.0.0"
+			}
+			escaped, err := module.EscapePath(modulePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dir := filepath.Join(root, filepath.FromSlash(escaped), version)
+			declared := strings.Replace(modulePath, ".git", "", 1)
+			mod := "module " + declared + "\n"
+			writeFile(t, filepath.Join(dir, "go.mod"), mod)
+			writeZip(t, filepath.Join(dir, "source.zip"), map[string]string{
+				modulePath + "@" + version + "/go.mod":      mod,
+				modulePath + "@" + version + "/sub/tool.go": "package tool\n",
+			})
+			zipPath := filepath.Join(dir, "source.zip")
+			if _, err := modzip.CheckZip(module.Version{Path: modulePath, Version: version}, zipPath); err != nil {
+				t.Fatalf("ZIP must be valid under storage identity: %v", err)
+			}
+			if _, err := modzip.CheckZip(module.Version{Path: declared, Version: version}, zipPath); err == nil {
+				t.Fatal("ZIP unexpectedly valid under go.mod identity")
+			}
+			store, err := Open([]string{root})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := store.Modules(); !reflect.DeepEqual(got, []string{modulePath}) {
+				t.Fatalf("Modules() = %v, want [%s]", got, modulePath)
+			}
+			if !store.HasVersion(modulePath, version) || store.HasVersion(declared, version) {
+				t.Fatal("artifact registered under the wrong identity")
+			}
+			if packages := store.Packages(); len(packages) != 1 || packages[0].Path != modulePath+"/sub" {
+				t.Fatalf("Packages() = %+v", packages)
+			}
+			for _, artifact := range []struct{ endpoint, file string }{
+				{"mod", "go.mod"}, {"zip", "source.zip"},
+			} {
+				want, err := os.ReadFile(filepath.Join(dir, artifact.file))
+				if err != nil {
+					t.Fatal(err)
+				}
+				w := httptest.NewRecorder()
+				store.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/"+escaped+"/@v/"+version+"."+artifact.endpoint, nil))
+				if w.Code != http.StatusOK || !bytes.Equal(w.Body.Bytes(), want) {
+					t.Fatalf("%s artifact changed or unavailable: status %d", artifact.file, w.Code)
+				}
+			}
+			// A real module at the declared path must coexist, not be shadowed
+			// by the malformed artifact with the same version.
+			writeAthensVersion(t, root, declared, version, "2026-01-01T00:00:00Z", "other")
+			store, err = Open([]string{root})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(store.Modules()) != 2 || !store.HasVersion(modulePath, version) || !store.HasVersion(declared, version) {
+				t.Fatalf("distinct module identities merged: %v", store.Modules())
+			}
+		})
 	}
 }
 
@@ -248,7 +316,11 @@ func TestDiscoverLocal(t *testing.T) {
 
 func writeAthensVersion(t *testing.T, root, modulePath, version, timestamp, packageDir string, imports ...string) {
 	t.Helper()
-	versionDir := filepath.Join(root, filepath.FromSlash(modulePath), version)
+	escapedPath, err := module.EscapePath(modulePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	versionDir := filepath.Join(root, filepath.FromSlash(escapedPath), version)
 	writeFile(t, filepath.Join(versionDir, "go.mod"), "module "+modulePath+"\n\ngo 1.26\n")
 	writeFile(t, filepath.Join(versionDir, version+".info"), `{"Version":"`+version+`","Time":"`+timestamp+`"}`)
 	source := "// Package " + packageDir + " provides local documentation.\npackage " + packageDir + "\n"

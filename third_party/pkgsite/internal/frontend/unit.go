@@ -133,6 +133,17 @@ func (s *Server) serveUnitPage(ctx context.Context, w http.ResponseWriter, r *ht
 
 	um, err := ds.GetUnitMeta(ctx, info.FullPath, info.ModulePath, info.RequestedVersion)
 	if err != nil {
+		// Direct-fetch datasources reject alternative modules rather than using
+		// the database-backed fetch server's redirect flow. Do not alias identities.
+		if errors.Is(err, derrors.AlternativeModule) {
+			return &serrors.ServerError{
+				Status: http.StatusUnprocessableEntity,
+				Err:    err,
+				Epage: &page.ErrorPage{
+					MessageData: "Documentation is unavailable because this artifact's module path differs from the module declared in go.mod, or it is a known alternative module. Check that the module directive and the proxy storage and ZIP paths agree. Ask the module maintainer to correct the module path and publish a new version; existing artifacts are not changed or redirected automatically.",
+				},
+			}
+		}
 		if !errors.Is(err, derrors.NotFound) {
 			return err
 		}

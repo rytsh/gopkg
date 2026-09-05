@@ -224,7 +224,7 @@ func fetchMainDetails(ctx context.Context, ds internal.DataSource, um *internal.
 		NumImports:        pr.Sprint(unit.NumImports),
 		ImportedByCount:   pr.Sprint(unit.NumImportedBy),
 		IsPackage:         unit.IsPackage(),
-		ModFileURL:        um.SourceInfo.ModuleURL() + "/go.mod",
+		ModFileURL:        um.SourceInfo.FileURL("go.mod"),
 		IsTaggedVersion:   isTaggedVersion,
 		IsStableVersion:   isStableVersion,
 		IsRedistributable: unit.IsRedistributable,

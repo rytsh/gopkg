@@ -85,7 +85,7 @@
       <details class="go-Tooltip js-tooltip" data-gtmc="tooltip">
         <summary class="go-textSubtle">
           {{template "unit-meta-details-check" .Unit.HasGoMod}}
-          Valid {{if .Unit.HasGoMod}}<a href="{{.Details.ModFileURL}}" target="_blank" rel="noopener">{{end}}go.mod{{if .Unit.HasGoMod}}</a>{{end}} file
+          Valid {{if and .Unit.HasGoMod .Details.ModFileURL}}<a href="{{.Details.ModFileURL}}" target="_blank" rel="noopener">go.mod</a>{{else}}go.mod{{end}} file
           <img class="go-Icon" role="button" tabindex="0" src="/static/shared/icon/help_gm_grey_24dp.svg" alt="" aria-label="Toggle go.mod validity tooltip" height="24" width="24">
         </summary>
         <p aria-live="polite" role="tooltip">

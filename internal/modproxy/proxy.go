@@ -526,21 +526,15 @@ func (s *Store) indexAthens(root, zipPath string, entry fs.DirEntry) error {
 		return fmt.Errorf("decode Athens version for %s: %w", zipPath, err)
 	}
 	modPath := filepath.Join(versionDir, "go.mod")
-	goMod, readErr := os.ReadFile(modPath)
-	modulePath := ""
-	if readErr == nil {
-		modulePath = modfile.ModulePath(goMod)
+	// The storage path identifies the artifact, even when go.mod declares a
+	// different module. Serving it under that declaration would invalidate its ZIP root.
+	relative, err := filepath.Rel(root, filepath.Dir(versionDir))
+	if err != nil {
+		return err
 	}
-	if modulePath == "" {
-		moduleDir := filepath.Dir(versionDir)
-		relative, err := filepath.Rel(root, moduleDir)
-		if err != nil {
-			return err
-		}
-		modulePath, err = module.UnescapePath(filepath.ToSlash(relative))
-		if err != nil {
-			return fmt.Errorf("identify Athens module for %s: %w", zipPath, err)
-		}
+	modulePath, err := module.UnescapePath(filepath.ToSlash(relative))
+	if err != nil {
+		return fmt.Errorf("identify Athens module for %s: %w", zipPath, err)
 	}
 	if err := module.Check(modulePath, version); err != nil {
 		return fmt.Errorf("invalid Athens module %s@%s: %w", modulePath, version, err)
