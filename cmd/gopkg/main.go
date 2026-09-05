@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/rakunlabs/into"
 	"github.com/rakunlabs/logi"
+	"github.com/rytsh/gopkg/internal/config"
 	appserver "github.com/rytsh/gopkg/internal/server"
 	"github.com/rytsh/gopkg/internal/site"
 )
@@ -48,20 +48,71 @@ func main() {
 }
 
 func run(ctx context.Context, args []string) error {
+	cfg, showVersion, err := loadConfig(ctx, args)
+	if err != nil {
+		return err
+	}
+	if showVersion {
+		fmt.Printf("gopkg version:%s commit:%s date:%s\n", version, commit, date)
+		return nil
+	}
+
+	selectedUpstream := ""
+	if cfg.FetchMissing {
+		selectedUpstream = strings.TrimSpace(cfg.UpstreamProxy)
+		if selectedUpstream == "" {
+			selectedUpstream = strings.TrimSpace(os.Getenv("GOPROXY"))
+		}
+		if selectedUpstream == "" {
+			return errors.New("fetch_missing requires upstream_proxy or GOPROXY")
+		}
+	}
+	if err := enforceOfflineGoEnvironment(); err != nil {
+		return err
+	}
+	if len(cfg.Dirs) == 0 && len(cfg.ProxyDirs) == 0 {
+		cfg.Dirs = append(cfg.Dirs, ".")
+	}
+	siteManager, err := site.New(ctx, site.Config{
+		Paths:         cfg.Dirs,
+		ProxyDirs:     cfg.ProxyDirs,
+		UpstreamProxy: selectedUpstream,
+		FetchTimeout:  cfg.FetchTimeout,
+	})
+	if err != nil {
+		return err
+	}
+	go siteManager.Watch(ctx, cfg.RefreshInterval)
+	return appserver.Start(ctx, appserver.Config{
+		Address:         cfg.HTTP,
+		FetchMissing:    cfg.FetchMissing,
+		AdminToken:      cfg.AdminToken,
+		Version:         version,
+		Commit:          commit,
+		RefreshInterval: cfg.RefreshInterval,
+	}, siteManager)
+}
+
+func loadConfig(ctx context.Context, args []string) (*config.Config, bool, error) {
+	cfg, err := config.Load(ctx, version)
+	if err != nil {
+		return nil, false, fmt.Errorf("load configuration: %w", err)
+	}
+
 	flags := flag.NewFlagSet("gopkg", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 
 	var dirs stringList
 	var proxyDirs stringList
-	addr := flags.String("http", ":8080", "HTTP listen address")
-	adminToken := flags.String("admin-token", "", "basic-auth password for proxy mutations (empty disables administration)")
-	fetchMissing := flags.Bool("fetch-missing", false, "fetch explicit missing module versions from GOPROXY")
-	fetchTimeout := flags.Duration("fetch-timeout", 2*time.Minute, "total timeout for an upstream module fetch")
-	refreshInterval := flags.Duration("refresh", 30*time.Second, "proxy directory change check interval (0 disables)")
+	addr := flags.String("http", cfg.HTTP, "HTTP listen address")
+	adminToken := flags.String("admin-token", "", "basic-auth password for proxy mutations (empty allows unauthenticated access)")
+	fetchMissing := flags.Bool("fetch-missing", cfg.FetchMissing, "fetch explicit missing module versions from GOPROXY")
+	fetchTimeout := flags.Duration("fetch-timeout", cfg.FetchTimeout, "total timeout for an upstream module fetch")
+	refreshInterval := flags.Duration("refresh", cfg.RefreshInterval, "proxy directory change check interval (0 disables)")
 	showVersion := flags.Bool("version", false, "print version information and exit")
 	flags.Var(&dirs, "dir", "local directory containing one or more Go modules (repeatable)")
 	flags.Var(&proxyDirs, "proxy-dir", "Athens disk storage or GOPROXY directory (repeatable)")
-	upstreamProxy := flags.String("upstream-proxy", "", "upstream GOPROXY list (defaults to the GOPROXY environment variable)")
+	upstreamProxy := flags.String("upstream-proxy", cfg.UpstreamProxy, "upstream GOPROXY list (defaults to the GOPROXY environment variable)")
 	flags.Usage = func() {
 		fmt.Fprintf(flags.Output(), "Usage: gopkg [flags] [LOCAL_DIR ...]\n\n")
 		fmt.Fprintln(flags.Output(), "Serves the official pkgsite interface from local modules and offline proxy storage.")
@@ -71,47 +122,32 @@ func run(ctx context.Context, args []string) error {
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(args); err != nil {
-		return err
+		return nil, false, err
 	}
-	if *showVersion {
-		fmt.Printf("gopkg version:%s commit:%s date:%s\n", version, commit, date)
-		return nil
-	}
-	selectedUpstream := ""
-	if *fetchMissing {
-		selectedUpstream = strings.TrimSpace(*upstreamProxy)
-		if selectedUpstream == "" {
-			selectedUpstream = strings.TrimSpace(os.Getenv("GOPROXY"))
+
+	adminTokenSet := false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "admin-token" {
+			adminTokenSet = true
 		}
-		if selectedUpstream == "" {
-			return errors.New("-fetch-missing requires -upstream-proxy or GOPROXY")
-		}
-	}
-	if err := enforceOfflineGoEnvironment(); err != nil {
-		return err
-	}
-	dirs = append(dirs, flags.Args()...)
-	if len(dirs) == 0 && len(proxyDirs) == 0 {
-		dirs = append(dirs, ".")
-	}
-	siteManager, err := site.New(ctx, site.Config{
-		Paths:         dirs,
-		ProxyDirs:     proxyDirs,
-		UpstreamProxy: selectedUpstream,
-		FetchTimeout:  *fetchTimeout,
 	})
-	if err != nil {
-		return err
+
+	cfg.HTTP = *addr
+	if adminTokenSet {
+		cfg.AdminToken = *adminToken
 	}
-	go siteManager.Watch(ctx, *refreshInterval)
-	return appserver.Start(ctx, appserver.Config{
-		Address:         *addr,
-		FetchMissing:    *fetchMissing,
-		AdminToken:      *adminToken,
-		Version:         version,
-		Commit:          commit,
-		RefreshInterval: *refreshInterval,
-	}, siteManager)
+	cfg.FetchMissing = *fetchMissing
+	cfg.FetchTimeout = *fetchTimeout
+	cfg.RefreshInterval = *refreshInterval
+	cfg.UpstreamProxy = *upstreamProxy
+	if len(dirs) > 0 || len(flags.Args()) > 0 {
+		cfg.Dirs = append(dirs, flags.Args()...)
+	}
+	if len(proxyDirs) > 0 {
+		cfg.ProxyDirs = proxyDirs
+	}
+
+	return cfg, *showVersion, nil
 }
 
 func enforceOfflineGoEnvironment() error {

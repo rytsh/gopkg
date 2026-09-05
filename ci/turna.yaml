@@ -1,0 +1,27 @@
+log_level: info
+
+loads:
+  - name: gopkg_config
+    export: /etc/gopkg.yaml
+    file_perm: "0600"
+    folder_perm: "0755"
+    statics:
+      - content:
+          name: gopkg_config
+          raw: true
+          content: |
+            http: ":8080"
+            dir: []
+            proxy_dir: []
+            admin_token: ""
+            fetch_missing: false
+            fetch_timeout: 2m
+            refresh: 30s
+            upstream_proxy: ""
+
+services:
+  - name: gopkg
+    path: /proxy
+    command: /usr/local/bin/gopkg
+    inherit_env: true
+    stop_timeout: 30s

@@ -16,7 +16,7 @@ func TestRequireAdmin(t *testing.T) {
 		authorize  func(*http.Request)
 		wantStatus int
 	}{
-		{name: "disabled", wantStatus: http.StatusNotFound},
+		{name: "empty token allows request", wantStatus: http.StatusNoContent},
 		{name: "missing credentials", token: "secret", wantStatus: http.StatusUnauthorized},
 		{name: "wrong basic password", token: "secret", authorize: func(r *http.Request) { r.SetBasicAuth("gopkg", "wrong") }, wantStatus: http.StatusUnauthorized},
 		{name: "basic password", token: "secret", authorize: func(r *http.Request) { r.SetBasicAuth("gopkg", "secret") }, wantStatus: http.StatusNoContent},

@@ -1,0 +1,63 @@
+package config
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"reflect"
+	"testing"
+	"time"
+
+	"github.com/rakunlabs/chu"
+)
+
+func TestLoadAppliesFileThenEnvironment(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "gopkg.yaml")
+	if err := os.WriteFile(configPath, []byte(`
+http: ":7000"
+proxy_dir:
+  - /file/proxy
+admin_token: file-secret
+fetch_timeout: 45s
+refresh: 1m
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("CONFIG_FILE", configPath)
+	t.Setenv("GOPKG_HTTP", "127.0.0.1:9000")
+	t.Setenv("GOPKG_DIR", "/src/one,/src/two")
+	t.Setenv("GOPKG_ADMIN_TOKEN", "env-secret")
+
+	cfg, err := Load(context.Background(), "test")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.HTTP != "127.0.0.1:9000" {
+		t.Errorf("HTTP = %q, want environment value", cfg.HTTP)
+	}
+	if !reflect.DeepEqual(cfg.Dirs, []string{"/src/one", "/src/two"}) {
+		t.Errorf("Dirs = %#v, want comma-separated environment values", cfg.Dirs)
+	}
+	if !reflect.DeepEqual(cfg.ProxyDirs, []string{"/file/proxy"}) {
+		t.Errorf("ProxyDirs = %#v, want file value", cfg.ProxyDirs)
+	}
+	if cfg.AdminToken != "env-secret" {
+		t.Errorf("AdminToken = %q, want environment value", cfg.AdminToken)
+	}
+	if cfg.FetchTimeout != 45*time.Second {
+		t.Errorf("FetchTimeout = %s, want 45s", cfg.FetchTimeout)
+	}
+	if cfg.RefreshInterval != time.Minute {
+		t.Errorf("RefreshInterval = %s, want 1m", cfg.RefreshInterval)
+	}
+
+	masked := chu.MarshalMap(cfg)
+	logged, ok := masked.(map[string]any)
+	if !ok {
+		t.Fatalf("MarshalMap() type = %T, want map[string]any", masked)
+	}
+	if _, exists := logged["admin_token"]; exists {
+		t.Error("MarshalMap() exposed admin_token")
+	}
+}

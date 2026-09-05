@@ -126,7 +126,7 @@ var adminPage = template.Must(template.New("admin").Parse(`<!doctype html>
 func requireAdmin(token string, next http.Handler) http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if token == "" {
-			http.Error(w, "proxy administration is disabled", http.StatusNotFound)
+			next.ServeHTTP(w, r)
 			return
 		}
 		_, password, basicOK := r.BasicAuth()
