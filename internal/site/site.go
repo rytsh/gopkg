@@ -10,11 +10,13 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/rytsh/gopkg/internal/modproxy"
 	"golang.org/x/mod/module"
 	"golang.org/x/pkgsite/cmd/pkgsiteembed"
@@ -23,6 +25,7 @@ import (
 type Config struct {
 	Paths         []string
 	ProxyDirs     []string
+	Exclude       []string
 	UpstreamProxy string
 	FetchTimeout  time.Duration
 }
@@ -55,6 +58,11 @@ type fetchFailure struct {
 }
 
 func New(ctx context.Context, cfg Config) (*Manager, error) {
+	for _, pattern := range cfg.Exclude {
+		if !doublestar.ValidatePattern(pattern) {
+			return nil, fmt.Errorf("invalid exclude pattern %q", pattern)
+		}
+	}
 	var upstream *modproxy.Upstream
 	if cfg.UpstreamProxy != "" {
 		if len(cfg.ProxyDirs) == 0 {
@@ -70,6 +78,7 @@ func New(ctx context.Context, cfg Config) (*Manager, error) {
 		config: Config{
 			Paths:     append([]string(nil), cfg.Paths...),
 			ProxyDirs: append([]string(nil), cfg.ProxyDirs...),
+			Exclude:   append([]string(nil), cfg.Exclude...),
 		},
 		upstream:      upstream,
 		fetchFailures: make(map[string]fetchFailure),
@@ -328,6 +337,15 @@ func (m *Manager) reloadIfChanged(ctx context.Context, fingerprint uint64) (Stat
 	return stats, err == nil, err
 }
 
+func (m *Manager) excludeModule(modulePath string) bool {
+	for _, pattern := range m.config.Exclude {
+		if matched, _ := doublestar.Match(pattern, modulePath); matched {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *Manager) reload(ctx context.Context) (Stats, error) {
 	fingerprint, err := modproxy.Fingerprint(m.config.ProxyDirs)
 	if err != nil {
@@ -365,6 +383,10 @@ func (m *Manager) reload(ctx context.Context) (Stats, error) {
 	if len(localModules) == 0 && len(proxyModules) == 0 && m.upstream == nil {
 		return Stats{}, errors.New("no Go modules found in the configured directories")
 	}
+	proxyModules = slices.DeleteFunc(proxyModules, m.excludeModule)
+	searchPackages = slices.DeleteFunc(searchPackages, func(pkg pkgsiteembed.SearchPackage) bool {
+		return m.excludeModule(pkg.ModulePath)
+	})
 	handler, err := pkgsiteembed.NewHandler(ctx, pkgsiteembed.Config{
 		Paths:          localModules,
 		ProxyHandler:   proxyHandler,
@@ -372,6 +394,7 @@ func (m *Manager) reload(ctx context.Context) (Stats, error) {
 		SearchPackages: searchPackages,
 		ListModules:    true,
 		Offline:        true,
+		ExcludeModule:  m.excludeModule,
 	})
 	if err != nil {
 		return Stats{}, fmt.Errorf("build pkgsite server: %w", err)

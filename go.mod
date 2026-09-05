@@ -3,6 +3,7 @@ module github.com/rytsh/gopkg
 go 1.27
 
 require (
+	github.com/bmatcuk/doublestar/v4 v4.9.1
 	github.com/rakunlabs/ada v0.5.1
 	github.com/rakunlabs/ada/middleware/log v0.5.1
 	github.com/rakunlabs/ada/middleware/recover v0.5.1

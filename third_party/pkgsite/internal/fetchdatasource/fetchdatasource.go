@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -42,6 +43,8 @@ type Options struct {
 	// include a ProxyModuleGetter in Getters.
 	ProxyClientForLatest *proxy.Client
 	BypassLicenseCheck   bool
+	// ExcludeModule filters search results only; getters remain available for direct access.
+	ExcludeModule func(string) bool
 }
 
 // New creates a new FetchDataSource from the options.
@@ -369,11 +372,31 @@ func (ds *FetchDataSource) Search(ctx context.Context, q string, opts internal.S
 	limit := opts.Offset + opts.MaxResults
 	for _, g := range ds.opts.Getters {
 		if s, ok := g.(fetch.SearchableModuleGetter); ok {
-			rs, err := s.Search(ctx, q, limit)
-			if err != nil {
-				return nil, err
+			for searchLimit := limit; ; {
+				rs, err := s.Search(ctx, q, searchLimit)
+				if err != nil {
+					return nil, err
+				}
+				if ds.opts.ExcludeModule == nil {
+					results = append(results, rs...)
+					break
+				}
+				var visible []*internal.SearchResult
+				for _, r := range rs {
+					if !ds.opts.ExcludeModule(r.ModulePath) {
+						visible = append(visible, r)
+					}
+				}
+				if len(visible) >= limit || len(rs) < searchLimit || searchLimit == math.MaxInt {
+					results = append(results, visible...)
+					break
+				}
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				// Refill before global pagination so excluded hits cannot underfill a page.
+				searchLimit += min(searchLimit, math.MaxInt-searchLimit)
 			}
-			results = append(results, rs...)
 		}
 	}
 	sort.Slice(results, func(i, j int) bool {

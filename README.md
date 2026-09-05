@@ -71,6 +71,10 @@ dir:
 # Athens storage or standard GOPROXY directories to serve.
 proxy_dir:
   - /var/lib/goproxy
+# Hide matching Go module paths from the homepage and search results.
+exclude:
+  - "balbbla.com/**"
+  - "github.com/acme/legacy"
 # Password for admin, upload, and fetch endpoints; empty accepts requests without authentication.
 admin_token: ""
 # Enable the Fetch button for missing versions; visiting a page never downloads them.
@@ -83,7 +87,17 @@ refresh: 10m
 upstream_proxy: ""
 ```
 
-The Docker image supports `GOPKG_HTTP`, `GOPKG_DIR`, `GOPKG_PROXY_DIR`,
+`exclude` uses [doublestar](https://github.com/bmatcuk/doublestar) patterns:
+`*` matches within one path segment, while `**` matches across segments.
+Patterns match case-sensitive Go module paths, without `https://` or `@version`.
+A matching module and all its packages are hidden from the homepage and search,
+for both local source trees and proxy storage. This is a visibility filter, not
+access control: direct documentation URLs and stored files remain available.
+Set `GOPKG_EXCLUDE='balbbla.com/**,github.com/acme/legacy'` to override the list
+through the environment. Invalid patterns fail startup. Restart the server after
+changing the configuration; index reloads retain the startup patterns.
+
+The Docker image supports `GOPKG_HTTP`, `GOPKG_DIR`, `GOPKG_PROXY_DIR`, `GOPKG_EXCLUDE`,
 `GOPKG_ADMIN_TOKEN`, `GOPKG_FETCH_MISSING`, `GOPKG_FETCH_TIMEOUT`,
 `GOPKG_REFRESH`, and `GOPROXY`. Its Turna configuration writes the resolved
 settings to `/etc/gopkg.yaml` before starting `gopkg`. A customized Turna

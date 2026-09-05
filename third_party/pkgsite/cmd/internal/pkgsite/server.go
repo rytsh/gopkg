@@ -46,6 +46,8 @@ type ServerConfig struct {
 	GoDocMode             bool
 	RecordCodeWikiMetrics frontend.RecordClickFunc
 	AdditionalModules     []frontend.LocalModule
+	// ExcludeModule hides module paths from the homepage and search, not documentation.
+	ExcludeModule func(string) bool
 
 	Proxy       *proxy.Client      // client, or nil; controlled by the -proxy flag
 	ProxyGetter fetch.ModuleGetter // optional replacement for the default proxy getter
@@ -126,11 +128,20 @@ func BuildServer(ctx context.Context, serverCfg ServerConfig) (*frontend.Server,
 		seenModules[m.ModulePath] = true
 		homepageModules = append(homepageModules, m)
 	}
+	if serverCfg.ExcludeModule != nil {
+		visible := homepageModules[:0]
+		for _, m := range homepageModules {
+			if !serverCfg.ExcludeModule(m.ModulePath) {
+				visible = append(visible, m)
+			}
+		}
+		homepageModules = visible
+	}
 	sort.Slice(homepageModules, func(i, j int) bool {
 		return homepageModules[i].ModulePath < homepageModules[j].ModulePath
 	})
 
-	return newServer(getters, localModules, homepageModules, cfg.proxy, serverCfg.GoDocMode, serverCfg.DisableExternalLinks, serverCfg.DevMode, serverCfg.DevModeStaticDir)
+	return newServer(getters, localModules, homepageModules, cfg.proxy, serverCfg.GoDocMode, serverCfg.DisableExternalLinks, serverCfg.DevMode, serverCfg.DevModeStaticDir, serverCfg.ExcludeModule)
 }
 
 // getModuleDirs returns the set of workspace modules for each directory,
@@ -295,11 +306,12 @@ func buildGetters(ctx context.Context, cfg getterConfig) ([]fetch.ModuleGetter, 
 	return getters, nil
 }
 
-func newServer(getters []fetch.ModuleGetter, localModules, homepageModules []frontend.LocalModule, prox *proxy.Client, goDocMode, disableExternalLinks, devMode bool, staticFlag string) (*frontend.Server, error) {
+func newServer(getters []fetch.ModuleGetter, localModules, homepageModules []frontend.LocalModule, prox *proxy.Client, goDocMode, disableExternalLinks, devMode bool, staticFlag string, excludeModule func(string) bool) (*frontend.Server, error) {
 	lds := fetchdatasource.Options{
 		Getters:              getters,
 		ProxyClientForLatest: prox,
 		BypassLicenseCheck:   true,
+		ExcludeModule:        excludeModule,
 	}.New()
 
 	// In dev mode, use a dirFS to pick up template/JS/CSS changes without

@@ -2,7 +2,9 @@ package fetchdatasource
 
 import (
 	"context"
+	"errors"
 	"io/fs"
+	"reflect"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -30,6 +32,7 @@ func TestGetUnitPopulatesImportCountsForMain(t *testing.T) {
 	ds := Options{
 		Getters:            []fetch.ModuleGetter{getter},
 		BypassLicenseCheck: true,
+		ExcludeModule:      func(string) bool { return true },
 	}.New()
 
 	um, err := ds.GetUnitMeta(t.Context(), modulePath, modulePath, version)
@@ -53,6 +56,56 @@ func TestGetUnitPopulatesImportCountsForMain(t *testing.T) {
 	if withMain.NumImports != 2 || withMain.NumImports != len(withMain.Imports) {
 		t.Fatalf("GetUnit() NumImports = %d, Imports = %v, want 2 imports", withMain.NumImports, withMain.Imports)
 	}
+}
+
+func TestSearchExcludeModule(t *testing.T) {
+	getter := &searchTestGetter{results: []*internal.SearchResult{
+		{PackagePath: "example.com/hidden/a", ModulePath: "example.com/hidden", Score: 5},
+		{PackagePath: "example.com/hidden/b", ModulePath: "example.com/hidden", Score: 4},
+		{PackagePath: "example.com/visible/a", ModulePath: "example.com/visible", Score: 3},
+		{PackagePath: "example.com/visible/b", ModulePath: "example.com/visible", Score: 2},
+	}}
+	for _, test := range []struct {
+		name    string
+		exclude func(string) bool
+		offset  int
+		want    []string
+	}{
+		{"nil", nil, 0, []string{"example.com/hidden/a", "example.com/hidden/b"}},
+		{"filtered", func(m string) bool { return m == "example.com/hidden" }, 0, []string{"example.com/visible/a", "example.com/visible/b"}},
+		{"pagination", func(m string) bool { return m == "example.com/hidden" }, 1, []string{"example.com/visible/b"}},
+		{"all excluded", func(string) bool { return true }, 0, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ds := Options{Getters: []fetch.ModuleGetter{getter}, ExcludeModule: test.exclude}.New()
+			rs, err := ds.Search(t.Context(), "query", internal.SearchOptions{Offset: test.offset, MaxResults: 2})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, r := range rs {
+				got = append(got, r.PackagePath)
+			}
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("paths = %v, want %v", got, test.want)
+			}
+		})
+	}
+	getter.err = errors.New("search failed")
+	ds := Options{Getters: []fetch.ModuleGetter{getter}, ExcludeModule: func(string) bool { return true }}.New()
+	if _, err := ds.Search(t.Context(), "query", internal.SearchOptions{MaxResults: 1}); !errors.Is(err, getter.err) {
+		t.Fatalf("Search error = %v, want %v", err, getter.err)
+	}
+}
+
+type searchTestGetter struct {
+	fetch.ModuleGetter
+	results []*internal.SearchResult
+	err     error
+}
+
+func (g *searchTestGetter) Search(_ context.Context, _ string, limit int) ([]*internal.SearchResult, error) {
+	return g.results[:min(limit, len(g.results))], g.err
 }
 
 type importedByTestGetter struct {

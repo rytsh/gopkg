@@ -32,6 +32,8 @@ type Config struct {
 	CacheDir       string
 	ListModules    bool
 	Offline        bool
+	// ExcludeModule hides module paths from the homepage and search, not documentation.
+	ExcludeModule func(string) bool
 }
 
 type SearchPackage struct {
@@ -82,6 +84,7 @@ func NewHandler(ctx context.Context, cfg Config) (http.Handler, error) {
 		UseLocalStdlib:       true,
 		DisableRemoteStdlib:  cfg.Offline,
 		DisableExternalLinks: cfg.Offline,
+		ExcludeModule:        cfg.ExcludeModule,
 	}
 	for _, modulePath := range cfg.ProxyModules {
 		serverConfig.AdditionalModules = append(serverConfig.AdditionalModules, frontend.LocalModule{

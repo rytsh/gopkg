@@ -20,6 +20,8 @@ proxy_dir:
 admin_token: file-secret
 fetch_timeout: 45s
 refresh: 1m
+exclude:
+  - "balbbla.com/**"
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -45,6 +47,17 @@ refresh: 1m
 	}
 	if cfg.AdminToken != "env-secret" {
 		t.Errorf("AdminToken = %q, want environment value", cfg.AdminToken)
+	}
+	if !reflect.DeepEqual(cfg.Exclude, []string{"balbbla.com/**"}) {
+		t.Errorf("Exclude = %#v, want file value", cfg.Exclude)
+	}
+	t.Setenv("GOPKG_EXCLUDE", "example.com/**,github.com/acme/legacy")
+	envCfg, err := Load(context.Background(), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(envCfg.Exclude, []string{"example.com/**", "github.com/acme/legacy"}) {
+		t.Errorf("Exclude = %#v, want environment override", envCfg.Exclude)
 	}
 	if cfg.FetchTimeout != 45*time.Second {
 		t.Errorf("FetchTimeout = %s, want 45s", cfg.FetchTimeout)

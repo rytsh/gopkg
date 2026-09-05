@@ -76,6 +76,7 @@ func run(ctx context.Context, args []string) error {
 	siteManager, err := site.New(ctx, site.Config{
 		Paths:         cfg.Dirs,
 		ProxyDirs:     cfg.ProxyDirs,
+		Exclude:       cfg.Exclude,
 		UpstreamProxy: selectedUpstream,
 		FetchTimeout:  cfg.FetchTimeout,
 	})

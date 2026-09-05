@@ -15,6 +15,7 @@ type Config struct {
 	HTTP            string        `cfg:"http" default:":8080"`
 	Dirs            []string      `cfg:"dir"`
 	ProxyDirs       []string      `cfg:"proxy_dir"`
+	Exclude         []string      `cfg:"exclude"`
 	AdminToken      string        `cfg:"admin_token" log:"-"`
 	FetchMissing    bool          `cfg:"fetch_missing" default:"false"`
 	FetchTimeout    time.Duration `cfg:"fetch_timeout" default:"2m"`
