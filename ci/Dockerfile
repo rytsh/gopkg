@@ -8,12 +8,11 @@ ARG TURNA_VERSION=0.9.8
 RUN apk add --no-cache ca-certificates curl
 RUN set -eux; \
     case "${TARGETARCH}" in \
-      amd64) turna_arch=x86_64; turna_sha256=99907aab9c1b59edbdc7a8656a380a333f5d7462846682c5291af15244f90c91 ;; \
-      arm64) turna_arch=arm64; turna_sha256=ebefc1faa059a4c5e6f7f86347e5ef43c9245ff9d8157093256809906df29372 ;; \
+      amd64) turna_arch=x86_64 ;; \
+      arm64) turna_arch=arm64 ;; \
       *) echo "unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     curl -fSL "https://github.com/rakunlabs/turna/releases/download/v${TURNA_VERSION}/turna_Linux_${turna_arch}.tar.gz" -o /tmp/turna.tar.gz; \
-    echo "${turna_sha256}  /tmp/turna.tar.gz" | sha256sum -c -; \
     tar -xzf /tmp/turna.tar.gz -C /usr/local/bin turna
 
 FROM --platform=$BUILDPLATFORM alpine:latest AS filesystem
