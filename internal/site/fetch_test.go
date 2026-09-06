@@ -3,9 +3,14 @@ package site
 import (
 	"archive/zip"
 	"bytes"
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -170,5 +175,194 @@ func TestFetchDisabledAndInvalidRequests(t *testing.T) {
 				t.Fatalf("status=%d want=%d body=%s", w.Code, test.status, w.Body.String())
 			}
 		})
+	}
+}
+
+func TestSharedFetch(t *testing.T) {
+	const modulePath = "example.com/shared"
+	const version = "v1.0.0"
+	const target = "/" + modulePath + "@" + version
+	for _, stale := range []bool{false, true} {
+		t.Run("stale="+strconv.FormatBool(stale), func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.Chmod(root, 0o555); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(root, 0o755) })
+			// The first directory must stay empty: download mode would publish here.
+			readOnly := t.TempDir()
+			if err := os.Chmod(readOnly, 0o555); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(readOnly, 0o755) })
+			var requests atomic.Int64
+			warmed := make(chan struct{})
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				if r.Method != http.MethodGet {
+					t.Errorf("warm method = %s", r.Method)
+				}
+				// These bodies must be discarded, not used for local publication.
+				_, _ = w.Write([]byte("not a local artifact"))
+				if strings.HasSuffix(r.URL.Path, ".zip") {
+					close(warmed)
+				}
+			}))
+			defer upstream.Close()
+			manager, err := New(t.Context(), Config{
+				ProxyDirs: []string{readOnly, root}, UpstreamProxy: upstream.URL,
+				FetchMode: "shared", FetchTimeout: 3 * time.Second,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			publish := func() {
+				t.Helper()
+				// Simulate Athens writing through its own writable mount.
+				if err := os.Chmod(root, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				defer func() { _ = os.Chmod(root, 0o555) }()
+				dir := filepath.Join(root, modulePath, version)
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				mod := "module " + modulePath + "\n\ngo 1.23\n"
+				var buffer bytes.Buffer
+				archive := zip.NewWriter(&buffer)
+				for name, content := range map[string]string{"go.mod": mod, "shared.go": "// Package shared is mounted.\npackage shared\n"} {
+					file, err := archive.Create(modulePath + "@" + version + "/" + name)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, err := file.Write([]byte(content)); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := archive.Close(); err != nil {
+					t.Fatal(err)
+				}
+				for name, data := range map[string][]byte{"go.mod": []byte(mod), "source.zip": buffer.Bytes()} {
+					if err := os.WriteFile(filepath.Join(dir, name), data, 0o444); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if stale {
+				publish()
+				manager.fetchFailures[modulePath+"@"+version] = fetchFailure{
+					err: errors.New("previous fetch failed"), expiresAt: time.Now().Add(time.Minute),
+				}
+			}
+			result := make(chan *httptest.ResponseRecorder, 1)
+			go func() {
+				w := httptest.NewRecorder()
+				manager.Fetch(w, fetchRequest(target))
+				result <- w
+			}()
+			if !stale {
+				select {
+				case <-warmed:
+				case <-time.After(5 * time.Second):
+					t.Fatal("upstream was not warmed")
+				}
+				select {
+				case w := <-result:
+					t.Fatalf("fetch returned before storage appeared: %d", w.Code)
+				case <-time.After(150 * time.Millisecond):
+				}
+				publish()
+			}
+			select {
+			case w := <-result:
+				if w.Code != http.StatusSeeOther || w.Header().Get("Location") != target {
+					t.Fatalf("fetch: status=%d body=%s", w.Code, w.Body.String())
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("shared fetch deadlocked")
+			}
+			wantRequests := int64(3)
+			if stale {
+				wantRequests = 0
+			}
+			if requests.Load() != wantRequests || !manager.current.Load().store.HasVersion(modulePath, version) {
+				t.Fatalf("requests=%d, stats=%+v", requests.Load(), manager.Stats())
+			}
+			entries, err := os.ReadDir(readOnly)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("shared fetch wrote to first directory: %v, %v", entries, err)
+			}
+			w := httptest.NewRecorder()
+			manager.ServeHTTP(w, httptest.NewRequest(http.MethodGet, target, nil))
+			if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Package shared is mounted") {
+				t.Fatalf("mounted documentation: status=%d", w.Code)
+			}
+		})
+	}
+}
+
+func TestSharedFetchMissing(t *testing.T) {
+	for _, cancelRequest := range []bool{false, true} {
+		t.Run("cancel="+strconv.FormatBool(cancelRequest), func(t *testing.T) {
+			root := t.TempDir()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			warmed := make(chan struct{})
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte("discard me"))
+				if strings.HasSuffix(r.URL.Path, ".zip") {
+					close(warmed)
+				}
+			}))
+			defer upstream.Close()
+			manager, err := New(t.Context(), Config{
+				ProxyDirs: []string{root}, UpstreamProxy: upstream.URL,
+				FetchMode: "shared", FetchTimeout: 300 * time.Millisecond,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := make(chan error, 1)
+			go func() { result <- manager.fetchMissing(ctx, "example.com/shared", "v1.0.0") }()
+			if cancelRequest {
+				select {
+				case <-warmed:
+				case err := <-result:
+					t.Fatalf("fetch failed before warming: %v", err)
+				case <-time.After(3 * time.Second):
+					t.Fatal("upstream was not warmed")
+				}
+				// Let the client finish consuming the zip and enter visibility polling.
+				time.Sleep(50 * time.Millisecond)
+				cancel()
+			}
+			select {
+			case err := <-result:
+				want := context.DeadlineExceeded
+				if cancelRequest {
+					want = context.Canceled
+				}
+				if !errors.Is(err, errSharedVersionMissing) || !errors.Is(err, want) {
+					t.Fatalf("fetch error = %v, want shared visibility failure and %v", err, want)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("fetch did not respect timeout/cancellation")
+			}
+			w := httptest.NewRecorder()
+			manager.Fetch(w, fetchRequest("/example.com/shared@v1.0.0"))
+			if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "did not appear in shared storage") {
+				t.Fatalf("missing storage response: status=%d body=%s", w.Code, w.Body.String())
+			}
+			entries, err := os.ReadDir(root)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("shared fetch wrote artifacts: %v, %v", entries, err)
+			}
+		})
+	}
+}
+
+func TestInvalidFetchMode(t *testing.T) {
+	if _, err := New(t.Context(), Config{FetchMode: "invalid"}); err == nil || !strings.Contains(err.Error(), "invalid fetch mode") {
+		t.Fatalf("New error = %v", err)
 	}
 }

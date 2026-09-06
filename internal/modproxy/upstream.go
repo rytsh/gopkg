@@ -54,6 +54,17 @@ func NewUpstream(proxyList string, timeout time.Duration) (*Upstream, error) {
 }
 
 func (u *Upstream) Fetch(ctx context.Context, modulePath, version string) (*FetchedVersion, error) {
+	return u.fetch(ctx, modulePath, version, false)
+}
+
+// Warm consumes artifact GETs to populate the upstream's backing storage without
+// retaining artifacts locally. GOPROXY has no cache-only or no-body operation.
+func (u *Upstream) Warm(ctx context.Context, modulePath, version string) error {
+	_, err := u.fetch(ctx, modulePath, version, true)
+	return err
+}
+
+func (u *Upstream) fetch(ctx context.Context, modulePath, version string, discard bool) (*FetchedVersion, error) {
 	if err := module.Check(modulePath, version); err != nil {
 		return nil, fmt.Errorf("invalid module version %s@%s: %w", modulePath, version, err)
 	}
@@ -71,7 +82,7 @@ func (u *Upstream) Fetch(ctx context.Context, modulePath, version string) (*Fetc
 		if entry.directive != "" {
 			lastErr = fmt.Errorf("GOPROXY directive %q is unavailable for on-demand fetch", entry.directive)
 		} else {
-			fetched, err := u.fetchFrom(ctx, entry.base, escapedPath, escapedVersion)
+			fetched, err := u.fetchFrom(ctx, entry.base, escapedPath, escapedVersion, discard)
 			if err == nil {
 				return fetched, nil
 			}
@@ -84,8 +95,28 @@ func (u *Upstream) Fetch(ctx context.Context, modulePath, version string) (*Fetc
 	return nil, fmt.Errorf("fetch %s@%s from GOPROXY: %w", modulePath, version, lastErr)
 }
 
-func (u *Upstream) fetchFrom(ctx context.Context, base *url.URL, escapedPath, escapedVersion string) (*FetchedVersion, error) {
+func (u *Upstream) fetchFrom(ctx context.Context, base *url.URL, escapedPath, escapedVersion string, discard bool) (*FetchedVersion, error) {
 	prefix := escapedPath + "/@v/" + escapedVersion
+	if discard {
+		for _, artifact := range []struct {
+			ext   string
+			limit int64
+		}{{".info", 1 << 20}, {".mod", 16 << 20}, {".zip", 500 << 20}} {
+			response, err := u.request(ctx, base, prefix+artifact.ext)
+			if err != nil {
+				return nil, err
+			}
+			n, err := io.Copy(io.Discard, io.LimitReader(response.Body, artifact.limit+1))
+			response.Body.Close()
+			if err != nil {
+				return nil, err
+			}
+			if n > artifact.limit {
+				return nil, fmt.Errorf("upstream %s artifact exceeds %d bytes", artifact.ext, artifact.limit)
+			}
+		}
+		return nil, nil
+	}
 	info, err := u.readArtifact(ctx, base, prefix+".info", 1<<20)
 	if err != nil {
 		return nil, err

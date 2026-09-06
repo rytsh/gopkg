@@ -149,8 +149,11 @@ mounted proxy directory.
 
 ### On-demand upstream fetch
 
-On-demand fetch is opt-in. Set `-fetch-missing` and provide the upstream proxy
-through `-upstream-proxy` or the `GOPROXY` environment variable:
+On-demand fetch requires a user-provided upstream proxy. `fetch_missing` defaults
+to `true`; provide the upstream through `-upstream-proxy`, `upstream_proxy`, or
+the fallback `GOPROXY` environment variable. If both settings are unset or empty,
+or the selected upstream is `off`, startup succeeds with fetching disabled.
+No public proxy is selected by default:
 
 ```sh
 GOPROXY=https://proxy.golang.org \
@@ -166,11 +169,52 @@ http://localhost:8080/github.com/worldline-go/wkafka@v0.6.7
 
 Visiting the page with GET or HEAD never downloads a module. Selecting **Fetch**
 submits `POST /-/fetch` with a `path` form field containing the documentation path.
-`gopkg` requests the version's `.info`, `.mod`, and `.zip` artifacts from the
+In the default `fetch_mode: download`, `gopkg` requests the version's `.info`, `.mod`, and `.zip` artifacts from the
 configured GOPROXY, validates them, publishes them atomically into the first
 `-proxy-dir`, rebuilds the index, and redirects (HTTP 303) to the documentation
 path, preserving any subpackage suffix. Subsequent
 requests use the local files and do not contact the upstream proxy.
+
+Set `fetch_mode: shared`, `GOPKG_FETCH_MODE=shared`, or `-fetch-mode=shared` when
+the configured GOPROXY is Athens and its backing disk storage is mounted in
+`proxy_dir`. For example:
+
+```yaml
+proxy_dir:
+  - /var/lib/athens
+upstream_proxy: "http://athens:3000"
+fetch_missing: true
+fetch_mode: shared
+fetch_timeout: 2m
+```
+
+```sh
+GOPROXY=http://athens:3000 gopkg -proxy-dir /var/lib/athens -fetch-mode=shared
+```
+
+Shared mode checks the mounted directories for index changes before warming,
+so a version already published by Athens is reused without upstream requests.
+Otherwise it sends GETs for all three artifacts, consuming and discarding their
+bodies to warm the upstream. It never calls local artifact publication or writes
+a separate copy, and works with a read-only mount. It checks storage changes
+every 100 ms after warming, reloads the index, and confirms the requested module
+version is indexed before returning the same HTTP 303 redirect. This does not
+depend on the background `refresh` interval. The existing `fetch_timeout` bounds
+the shared fetch and visibility wait, and request cancellation stops polling.
+An upstream success without a visible local version returns HTTP 502 with shared
+storage troubleshooting guidance, not a success redirect.
+
+The mounted directory must actually be the upstream's shared backing storage;
+configuring an Athens URL alone is not enough. GOPROXY has no no-body cache
+command, so network response bodies are still transferred even in shared mode.
+Fallback separators and upstream authentication work in both modes; a fallback
+proxy that does not populate the mounted storage cannot make the version locally
+available. Upload behavior is unchanged and still requires a writable first
+proxy directory. See the [read-only Docker example](README.md#shared-athens-storage).
+
+The only accepted `fetch_mode` values are `download` (default) and `shared`.
+`GOPKG_FETCH_MODE` overrides the configuration file; `-fetch-mode` overrides both.
+Invalid modes fail startup, even when fetching is disabled.
 
 Only syntactically valid, explicit module versions are fetched. `latest` and
 direct VCS downloads are not supported. Comma and pipe fallback behavior
@@ -185,8 +229,10 @@ or configure authentication. Proxy addresses and credentials are not shown on
 the page. An upstream not-found result returns a helpful 404 page; other fetch
 failures return a retry page with HTTP 502. Without upstream fetching enabled,
 the missing page links to administration instead of showing a Fetch button,
-and POST returns HTTP 503. `upstream_proxy` alone does not enable fetching:
-`fetch_missing` must also be enabled, and a writable proxy directory is required.
+and POST returns HTTP 503. `fetch_missing` must be enabled (the default), and a
+proxy directory is required (writable in `download` mode, shared with the upstream
+in `shared` mode). Set `-fetch-missing=false` to disable
+fetching even with an upstream configured.
 
 ### Offline runtime
 
@@ -194,8 +240,9 @@ At startup, `gopkg` still enforces `GOTOOLCHAIN=local`, `GOPROXY=off`,
 `GOSUMDB=off`, and `GOVCS=*:off` for Go subprocesses. Proxy reads use an
 in-process HTTP transport; repository, deps.dev, CodeWiki, remote source
 metadata, remote standard-library lookups, and direct VCS access remain
-disabled. Without `-fetch-missing`, runtime makes no outbound connections. When
-enabled, only the controlled HTTP(S) GOPROXY client performs outbound requests.
+disabled. With fetching disabled or no upstream selected, module serving makes
+no outbound connections. When fetching is enabled, only the controlled HTTP(S)
+GOPROXY client performs outbound requests for missing modules.
 
 Standard-library documentation is loaded only from the local `GOROOT`. A host
 installation therefore needs a compatible local Go distribution. The published
@@ -213,7 +260,9 @@ Usage: gopkg [flags] [LOCAL_DIR ...]
   -dir value
         local directory containing one or more Go modules (repeatable)
   -fetch-missing
-        allow explicit missing module versions to be fetched from GOPROXY using the Fetch button
+        allow explicit missing module versions to be fetched from GOPROXY using the Fetch button (default true)
+  -fetch-mode string
+        fetch storage mode: download or shared (default "download")
   -fetch-timeout duration
         total timeout for an upstream module fetch (default 2m0s)
   -http string

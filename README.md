@@ -15,24 +15,8 @@ offline behavior, command-line options, and development notes.
 
 ## Installation
 
-### Latest release on Linux (x86-64)
-
-```sh
-mkdir -p ~/bin
-curl -fSL https://github.com/rytsh/gopkg/releases/latest/download/gopkg_Linux_x86_64.tar.gz | tar -xz --overwrite -C ~/bin/ gopkg
-```
-
-Add `~/bin` to `PATH` if needed. Archives for Linux, macOS, Windows, x86-64,
-and ARM64 are available on the
+Archives for Linux, macOS, Windows, x86-64, and ARM64 are available on the
 [releases page](https://github.com/rytsh/gopkg/releases/latest).
-
-### Build from source
-
-```sh
-git clone https://github.com/rytsh/gopkg.git
-cd gopkg
-go build -o gopkg ./cmd/gopkg
-```
 
 ## Docker
 
@@ -41,18 +25,46 @@ Registry:
 
 ```sh
 docker run --rm -p 8080:8080 \
-  -e GOPKG_ADMIN_TOKEN='replace-me' \
   -e GOPKG_DIR=/src \
   -v "$PWD:/src:ro" \
   -v gopkg-proxy:/proxy \
   ghcr.io/rytsh/gopkg:latest
 ```
 
+> `-e GOPKG_ADMIN_TOKEN='replace-me'` usable for remote fetch and upload endpoints. The token is stored in memory only.  
+> Mount a config file with `-v "$PWD/gopkg.yaml:/etc/gopkg.yaml:ro"` or set other environment variables to override defaults.
+
 The image runs as UID/GID `65532`. `GOPKG_DIR` is optional and is scanned
 recursively for local Go modules. The `/proxy` volume stores standard GOPROXY or
 Athens data and must be writable by UID `65532` when uploads are enabled.
 
 Open <http://localhost:8080> after the container starts.
+
+### Shared Athens storage
+
+If Athens already writes to `/srv/athens` on the Docker host, mount that same
+storage read-only and use shared fetch mode. This example assumes Athens is
+reachable as `http://athens:3000` on an existing Docker network named `athens`:
+
+```sh
+docker run --rm --network athens -p 8080:8080 \
+  -e GOPROXY=http://athens:3000 \
+  -e GOPKG_PROXY_DIR=/proxy \
+  -e GOPKG_FETCH_MODE=shared \
+  -e GOPKG_ADMIN_TOKEN='replace-with-a-strong-token' \
+  -v /srv/athens:/proxy:ro \
+  ghcr.io/rytsh/gopkg:latest
+```
+
+`/srv/athens` must be the host directory backing Athens's
+`ATHENS_DISK_STORAGE_ROOT`, readable by UID `65532`. Selecting **Fetch** warms
+Athens, waits for the version to appear in the mount, and reloads the local
+index. `gopkg` does not write a second copy of the artifacts. GOPROXY still
+transfers the `.info`, `.mod`, and `.zip` response bodies over the network;
+`gopkg` consumes and discards them because the protocol has no no-body cache
+command. An unrelated directory or a remote Athens store without a shared
+mount will not work. Uploads still require writable storage and cannot write
+to this read-only mount.
 
 ## Configuration
 
@@ -82,14 +94,29 @@ exclude:
 # Password for admin, upload, and fetch endpoints; empty accepts requests without authentication.
 admin_token: ""
 # Enable the Fetch button for missing versions; visiting a page never downloads them.
-fetch_missing: false
-# Maximum duration allowed for one upstream module fetch.
+fetch_missing: true
+# download writes local artifacts; shared warms upstream and reads shared storage.
+fetch_mode: download
+# Maximum duration allowed for fetching, including shared-storage visibility waits.
 fetch_timeout: 2m
 # Interval for detecting proxy directory changes; use 0 to disable polling.
 refresh: 10m
 # Upstream GOPROXY URL or fallback list; empty uses the GOPROXY environment variable.
 upstream_proxy: ""
 ```
+
+`fetch_missing` defaults to `true`, but fetching is disabled without a
+user-provided upstream. `upstream_proxy` takes precedence over the `GOPROXY`
+environment variable; if both are unset or empty, or the selected value is `off`,
+startup succeeds with fetching disabled. No public proxy is selected by default.
+Set `fetch_missing: false` (or `-fetch-missing=false`) to disable fetching even
+when an upstream is configured. Visiting a page never downloads missing modules.
+
+`fetch_mode` accepts `download` (default) or `shared`; invalid values fail
+startup. Set `GOPKG_FETCH_MODE=shared` or `-fetch-mode=shared` to warm the upstream
+without local artifact writes. Shared mode requires the upstream's backing
+storage in `proxy_dir` and fails if the requested version is not visible before
+`fetch_timeout` expires. Download mode requires a writable first proxy directory.
 
 `exclude` uses [doublestar](https://github.com/bmatcuk/doublestar) patterns:
 `*` matches within one path segment, while `**` matches across segments.
@@ -102,10 +129,11 @@ through the environment. Invalid patterns fail startup. Restart the server after
 changing the configuration; index reloads retain the startup patterns.
 
 The Docker image supports `GOPKG_HTTP`, `GOPKG_DIR`, `GOPKG_PROXY_DIR`, `GOPKG_EXCLUDE`,
-`GOPKG_ADMIN_TOKEN`, `GOPKG_FETCH_MISSING`, `GOPKG_FETCH_TIMEOUT`,
-`GOPKG_REFRESH`, and `GOPROXY`. Its Turna configuration writes the resolved
-settings to `/etc/gopkg.yaml` before starting `gopkg`. A customized Turna
-configuration can be mounted at `/etc/turna/turna.yaml`.
+`GOPKG_ADMIN_TOKEN`, `GOPKG_FETCH_MISSING`, `GOPKG_FETCH_MODE`, `GOPKG_FETCH_TIMEOUT`,
+`GOPKG_REFRESH`, `GOPKG_UPSTREAM_PROXY`, and `GOPROXY`. The image starts `gopkg`
+directly, which reads its configuration from the environment. The image defaults
+to `GOPKG_FETCH_MISSING=true` and `GOPROXY=off`, so fetching remains disabled until
+you provide an upstream via `GOPKG_UPSTREAM_PROXY` or `GOPROXY`.
 
 <details>
 <summary>Adding modules remotely with curl</summary>
@@ -119,7 +147,8 @@ requests without authentication.
 
 ### Fetch from an upstream proxy
 
-Enable fetching in the server configuration and provide a writable proxy directory:
+Choose an upstream proxy and provide a writable proxy directory in the server
+configuration (`fetch_missing` is enabled by default):
 
 ```yaml
 proxy_dir:
@@ -165,8 +194,9 @@ and must match the module path and version. The ZIP must use the standard Go
 module ZIP format, not an arbitrary source archive.
 
 A successful upload returns `201 Created` with JSON and automatically refreshes
-the index. Both methods write to the first configured `proxy_dir`, which must be
-writable by the server. Uploads do not overwrite existing versions.
+the index. Uploads and the default `download` fetch mode write to the first
+configured `proxy_dir`, which must be writable by the server. Shared fetch mode
+only reads mounted artifacts. Uploads do not overwrite existing versions.
 
 See [DETAILS.md](DETAILS.md#refreshing-and-adding-versions) for more administration options.
 

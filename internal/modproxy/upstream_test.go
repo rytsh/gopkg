@@ -3,10 +3,12 @@ package modproxy
 import (
 	"archive/zip"
 	"bytes"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -51,6 +53,67 @@ func TestUpstreamFetchesProxyArtifacts(t *testing.T) {
 	}
 	if !reflect.DeepEqual(requested, wantPaths) {
 		t.Fatalf("requested paths = %v, want %v", requested, wantPaths)
+	}
+}
+
+func TestUpstreamWarm(t *testing.T) {
+	for _, test := range []struct {
+		name, separator string
+		status          int
+		wantRequests    int64
+	}{
+		{"comma stops on 500", ",", 500, 0},
+		{"comma falls back on 404", ",", 404, 3},
+		{"comma falls back on 410", ",", 410, 3},
+		{"pipe falls back on 500", "|", 500, 3},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "failed", test.status)
+			}))
+			defer first.Close()
+			var requests atomic.Int64
+			second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				index := requests.Add(1) - 1
+				if user, password, ok := r.BasicAuth(); !ok || user != "user" || password != "secret" {
+					t.Error("warm did not preserve authentication")
+				}
+				exts := []string{".info", ".mod", ".zip"}
+				if index >= 3 || r.Method != http.MethodGet || r.URL.Path != "/cache/example.com/!acme/tool/@v/v1.0.0"+exts[index] {
+					t.Errorf("unexpected warm request: %s %s", r.Method, r.URL.Path)
+				}
+				_, _ = io.Copy(w, strings.NewReader(strings.Repeat("x", 64<<10)))
+			}))
+			defer second.Close()
+			u, err := NewUpstream(first.URL+test.separator+strings.Replace(second.URL, "://", "://user:secret@", 1)+"/cache", time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = u.Warm(t.Context(), "example.com/Acme/tool", "v1.0.0")
+			if (err == nil) != (test.wantRequests == 3) || requests.Load() != test.wantRequests {
+				t.Fatalf("Warm error=%v requests=%d", err, requests.Load())
+			}
+			if err := u.Warm(t.Context(), "../invalid", "v1.0.0"); err == nil {
+				t.Fatal("invalid module accepted")
+			}
+		})
+	}
+}
+
+func TestUpstreamWarmConsumesZipBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".zip") {
+			w.Header().Set("Content-Length", "1000")
+		}
+		_, _ = w.Write([]byte("short body"))
+	}))
+	defer server.Close()
+	u, err := NewUpstream(server.URL, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := u.Warm(t.Context(), "example.com/tool", "v1.0.0"); !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("Warm error = %v, want truncated zip body error", err)
 	}
 }
 

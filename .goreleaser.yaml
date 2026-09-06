@@ -60,8 +60,6 @@ dockers_v2:
     ids:
       - gopkg
     dockerfile: ci/Dockerfile
-    extra_files:
-      - ci/turna.yaml
     images:
       - ghcr.io/rytsh/gopkg
     tags:

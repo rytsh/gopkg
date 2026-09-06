@@ -7,6 +7,16 @@ import (
 
 	"github.com/rakunlabs/chu"
 	"github.com/rakunlabs/chu/loader/loaderenv"
+
+	// External chu loaders (registered via init) so they can be selected by
+	// name when the env-provided config set enables them.
+	_ "github.com/rakunlabs/chu/loader/external/loaderawssecrets"
+	_ "github.com/rakunlabs/chu/loader/external/loaderawsssm"
+	_ "github.com/rakunlabs/chu/loader/external/loaderazurekeyvault"
+	_ "github.com/rakunlabs/chu/loader/external/loaderconsul"
+	_ "github.com/rakunlabs/chu/loader/external/loadergcpparameter"
+	_ "github.com/rakunlabs/chu/loader/external/loadergcpsecret"
+	_ "github.com/rakunlabs/chu/loader/external/loadervault"
 )
 
 const ServiceName = "gopkg"
@@ -17,7 +27,8 @@ type Config struct {
 	ProxyDirs       []string      `cfg:"proxy_dir"`
 	Exclude         []string      `cfg:"exclude"`
 	AdminToken      string        `cfg:"admin_token" log:"-"`
-	FetchMissing    bool          `cfg:"fetch_missing" default:"false"`
+	FetchMissing    bool          `cfg:"fetch_missing" default:"true"`
+	FetchMode       string        `cfg:"fetch_mode" default:"download"`
 	FetchTimeout    time.Duration `cfg:"fetch_timeout" default:"2m"`
 	RefreshInterval time.Duration `cfg:"refresh" default:"10m"`
 	UpstreamProxy   string        `cfg:"upstream_proxy" log:"-"`

@@ -28,7 +28,10 @@ type Config struct {
 	Exclude       []string
 	UpstreamProxy string
 	FetchTimeout  time.Duration
+	FetchMode     string
 }
+
+var errSharedVersionMissing = errors.New("upstream fetch succeeded but the requested version did not appear in shared proxy storage")
 
 type Stats struct {
 	LocalModules   int       `json:"local_modules"`
@@ -58,6 +61,12 @@ type fetchFailure struct {
 }
 
 func New(ctx context.Context, cfg Config) (*Manager, error) {
+	if cfg.FetchMode == "" {
+		cfg.FetchMode = "download"
+	}
+	if cfg.FetchMode != "download" && cfg.FetchMode != "shared" {
+		return nil, fmt.Errorf("invalid fetch mode %q: want download or shared", cfg.FetchMode)
+	}
 	for _, pattern := range cfg.Exclude {
 		if !doublestar.ValidatePattern(pattern) {
 			return nil, fmt.Errorf("invalid exclude pattern %q", pattern)
@@ -66,6 +75,9 @@ func New(ctx context.Context, cfg Config) (*Manager, error) {
 	var upstream *modproxy.Upstream
 	if cfg.UpstreamProxy != "" {
 		if len(cfg.ProxyDirs) == 0 {
+			if cfg.FetchMode == "shared" {
+				return nil, errors.New("shared fetch requires a mounted proxy directory")
+			}
 			return nil, errors.New("on-demand fetch requires a writable proxy directory")
 		}
 		var err error
@@ -76,9 +88,11 @@ func New(ctx context.Context, cfg Config) (*Manager, error) {
 	}
 	manager := &Manager{
 		config: Config{
-			Paths:     append([]string(nil), cfg.Paths...),
-			ProxyDirs: append([]string(nil), cfg.ProxyDirs...),
-			Exclude:   append([]string(nil), cfg.Exclude...),
+			Paths:        append([]string(nil), cfg.Paths...),
+			ProxyDirs:    append([]string(nil), cfg.ProxyDirs...),
+			Exclude:      append([]string(nil), cfg.Exclude...),
+			FetchMode:    cfg.FetchMode,
+			FetchTimeout: cfg.FetchTimeout,
 		},
 		upstream:      upstream,
 		fetchFailures: make(map[string]fetchFailure),
@@ -135,6 +149,9 @@ func (m *Manager) Fetch(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, modproxy.ErrUpstreamNotFound) {
 			message = "This version was not found in the configured upstream proxy. Check the module path and version before retrying."
 			status = http.StatusNotFound
+		}
+		if errors.Is(err, errSharedVersionMissing) {
+			message = "The upstream fetch succeeded, but this version did not appear in shared storage before the request ended. Check that the configured proxy directories mount the upstream's backing storage, then retry after 30 seconds."
 		}
 		// Upstream errors can contain credentials or query parameters from proxy URLs.
 		slog.WarnContext(r.Context(), "module fetch failed", "module", modulePath, "version", version, "status", status)
@@ -230,8 +247,32 @@ func (m *Manager) AddVersion(ctx context.Context, modulePath, version string, in
 }
 
 func (m *Manager) fetchMissing(ctx context.Context, modulePath, version string) error {
+	if m.config.FetchMode == "shared" {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, m.config.FetchTimeout)
+		defer cancel()
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.config.FetchMode == "shared" {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		// Already holding mu: use reload, not the locking public Reload method.
+		// Rescan before consulting the failure cache or warming a stale index.
+		fingerprint, err := modproxy.Fingerprint(m.config.ProxyDirs)
+		if err != nil {
+			return err
+		}
+		if current := m.current.Load(); current == nil || current.fingerprint != fingerprint {
+			if _, err := m.reload(ctx); err != nil {
+				return err
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
 	current := m.current.Load()
 	if current != nil && current.store != nil && current.store.HasVersion(modulePath, version) {
 		return nil
@@ -241,6 +282,15 @@ func (m *Manager) fetchMissing(ctx context.Context, modulePath, version string) 
 		return failure.err
 	}
 	slog.InfoContext(ctx, "fetching missing module version", "module", modulePath, "version", version)
+	if m.config.FetchMode == "shared" {
+		err := m.fetchShared(ctx, modulePath, version)
+		if err != nil {
+			m.fetchFailures[key] = fetchFailure{err: err, expiresAt: time.Now().Add(30 * time.Second)}
+			return err
+		}
+		delete(m.fetchFailures, key)
+		return nil
+	}
 	fetched, err := m.upstream.Fetch(ctx, modulePath, version)
 	if err != nil {
 		m.fetchFailures[key] = fetchFailure{err: err, expiresAt: time.Now().Add(30 * time.Second)}
@@ -266,6 +316,34 @@ func (m *Manager) fetchMissing(ctx context.Context, modulePath, version string) 
 	delete(m.fetchFailures, key)
 	slog.InfoContext(ctx, "missing module version fetched", "module", modulePath, "version", version)
 	return nil
+}
+
+// fetchShared runs under mu, like the download path. External storage writers
+// need no manager lock, and reload must not acquire it again.
+func (m *Manager) fetchShared(ctx context.Context, modulePath, version string) error {
+	if err := m.upstream.Warm(ctx, modulePath, version); err != nil {
+		return err
+	}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("%w: %w", errSharedVersionMissing, err)
+		}
+		fingerprint, err := modproxy.Fingerprint(m.config.ProxyDirs)
+		if err == nil && fingerprint != m.current.Load().fingerprint {
+			// A writer may still be publishing files. Retry incomplete scans until
+			// the deadline; never report success based only on upstream responses.
+			if _, err := m.reload(ctx); err == nil && ctx.Err() == nil && m.current.Load().store.HasVersion(modulePath, version) {
+				return nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("%w: %w", errSharedVersionMissing, ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 func moduleVersionFromPath(requestPath string) (string, string, bool) {

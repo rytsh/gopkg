@@ -57,16 +57,6 @@ func run(ctx context.Context, args []string) error {
 		return nil
 	}
 
-	selectedUpstream := ""
-	if cfg.FetchMissing {
-		selectedUpstream = strings.TrimSpace(cfg.UpstreamProxy)
-		if selectedUpstream == "" {
-			selectedUpstream = strings.TrimSpace(os.Getenv("GOPROXY"))
-		}
-		if selectedUpstream == "" {
-			return errors.New("fetch_missing requires upstream_proxy or GOPROXY")
-		}
-	}
 	if err := enforceOfflineGoEnvironment(); err != nil {
 		return err
 	}
@@ -77,8 +67,9 @@ func run(ctx context.Context, args []string) error {
 		Paths:         cfg.Dirs,
 		ProxyDirs:     cfg.ProxyDirs,
 		Exclude:       cfg.Exclude,
-		UpstreamProxy: selectedUpstream,
+		UpstreamProxy: cfg.UpstreamProxy,
 		FetchTimeout:  cfg.FetchTimeout,
+		FetchMode:     cfg.FetchMode,
 	})
 	if err != nil {
 		return err
@@ -108,6 +99,7 @@ func loadConfig(ctx context.Context, args []string) (*config.Config, bool, error
 	addr := flags.String("http", cfg.HTTP, "HTTP listen address")
 	adminToken := flags.String("admin-token", "", "basic-auth password for proxy mutations (empty allows unauthenticated access)")
 	fetchMissing := flags.Bool("fetch-missing", cfg.FetchMissing, "allow explicit missing module versions to be fetched from GOPROXY using the Fetch button")
+	fetchMode := flags.String("fetch-mode", cfg.FetchMode, "fetch storage mode: download or shared")
 	fetchTimeout := flags.Duration("fetch-timeout", cfg.FetchTimeout, "total timeout for an upstream module fetch")
 	refreshInterval := flags.Duration("refresh", cfg.RefreshInterval, "proxy directory change check interval (0 disables)")
 	showVersion := flags.Bool("version", false, "print version information and exit")
@@ -138,6 +130,10 @@ func loadConfig(ctx context.Context, args []string) (*config.Config, bool, error
 		cfg.AdminToken = *adminToken
 	}
 	cfg.FetchMissing = *fetchMissing
+	cfg.FetchMode = *fetchMode
+	if cfg.FetchMode != "download" && cfg.FetchMode != "shared" {
+		return nil, false, fmt.Errorf("invalid fetch mode %q: want download or shared", cfg.FetchMode)
+	}
 	cfg.FetchTimeout = *fetchTimeout
 	cfg.RefreshInterval = *refreshInterval
 	cfg.UpstreamProxy = *upstreamProxy
@@ -146,6 +142,16 @@ func loadConfig(ctx context.Context, args []string) (*config.Config, bool, error
 	}
 	if len(proxyDirs) > 0 {
 		cfg.ProxyDirs = proxyDirs
+	}
+
+	// Resolve the upstream before GOPROXY is disabled for Go subprocesses.
+	cfg.UpstreamProxy = strings.TrimSpace(cfg.UpstreamProxy)
+	if cfg.UpstreamProxy == "" {
+		cfg.UpstreamProxy = strings.TrimSpace(os.Getenv("GOPROXY"))
+	}
+	if !cfg.FetchMissing || cfg.UpstreamProxy == "" || cfg.UpstreamProxy == "off" {
+		cfg.FetchMissing = false
+		cfg.UpstreamProxy = ""
 	}
 
 	return cfg, *showVersion, nil
